@@ -1,0 +1,44 @@
+{
+  "market": "xyz:COPPER",
+  "dex": "xyz",
+  "_comment_dex": "For canonical markets like ICP, set market to 'ICP' and dex to '' (empty string)",
+  "description": "Example grid trading config for HIP-3 builder market",
+
+  "grid": {
+    "spacing_pct": 0.5,
+    "num_levels_each_side": 5,
+    "order_size_usd": 25,
+    "rebalance_threshold_pct": 2.0,
+    "bias": "neutral"
+  },
+
+  "position": {
+    "max_position_usd": 300,
+    "leverage": 3
+  },
+
+  "timing": {
+    "fill_check_seconds": 5,
+    "health_check_seconds": 60
+  },
+
+  "safety": {
+    "max_open_orders": 12,
+    "emergency_stop_loss_pct": -15.0,
+    "min_margin_ratio_pct": 10.0,
+    "pause_on_high_volatility": true,
+    "volatility_threshold_pct": 5.0,
+    "max_account_drawdown_pct": -20.0,
+    "close_position_on_emergency": true
+  },
+
+  "exchange": {
+    "price_decimals": 4,
+    "size_decimals": 2
+  },
+
+  "account": {
+    "subaccount_address": null,
+    "is_subaccount": false
+  }
+}

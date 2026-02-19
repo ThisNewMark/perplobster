@@ -1,0 +1,60 @@
+{
+  "pair": "XMR1/USDC",
+  "description": "Example spot market maker config - XMR1 builder asset using XMR perp as oracle",
+
+  "trading": {
+    "base_order_size": 0.1,
+    "min_order_size": 0.05,
+    "size_increment": 0.01,
+    "base_spread_bps": 35,
+    "min_spread_bps": 20,
+    "max_spread_bps": 100
+  },
+
+  "position": {
+    "target_position": 0,
+    "max_position_size": 1.0
+  },
+
+  "timing": {
+    "update_interval_seconds": 5,
+    "update_threshold_bps": 10,
+    "fallback_check_seconds": 30
+  },
+
+  "inventory": {
+    "inventory_skew_threshold": 0.1,
+    "inventory_skew_bps_per_unit": 25,
+    "max_skew_bps": 80
+  },
+
+  "oracle": {
+    "max_oracle_age_seconds": 60,
+    "max_oracle_jump_pct": 5.0,
+    "min_spread_to_oracle_bps": 5
+  },
+
+  "safety": {
+    "max_spot_perp_deviation_pct": 5.0,
+    "max_quote_count": 2,
+    "emergency_stop_loss_pct": -10.0,
+    "smart_order_mgmt_enabled": true,
+    "emergency_sell_if_below_oracle_pct": 15.0
+  },
+
+  "exchange": {
+    "spot_coin": "@260",
+    "spot_coin_order": "@260",
+    "perp_coin": "XMR",
+    "perp_dex": "",
+    "_comment_perp_dex": "For HIP-3 perp oracles, set perp_dex to 'xyz' or 'flx' and perp_coin to 'flx:XMR'. For canonical perps, leave perp_dex empty.",
+    "use_perp_oracle_price": false,
+    "price_decimals": 2,
+    "size_decimals": 2
+  },
+
+  "account": {
+    "subaccount_address": null,
+    "is_subaccount": false
+  }
+}

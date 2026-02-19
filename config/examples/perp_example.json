@@ -1,0 +1,62 @@
+{
+  "market": "ICP",
+  "dex": "",
+  "_comment_market": "For HIP-3 builder markets, use 'xyz:COPPER' format and set dex to 'xyz' or 'flx'",
+  "description": "Example perpetual market maker config - adjust for your market",
+
+  "trading": {
+    "base_order_size": 15,
+    "min_order_size": 0.1,
+    "size_increment": 0.01,
+    "base_spread_bps": 15,
+    "min_spread_bps": 8,
+    "max_spread_bps": 200,
+    "_comment_decimals": "For BTC use price_decimals: 0, for most alts use 2-4"
+  },
+
+  "position": {
+    "target_position_usd": 0,
+    "max_position_usd": 100,
+    "leverage": 3
+  },
+
+  "timing": {
+    "update_threshold_bps": 10,
+    "fallback_check_seconds": 30
+  },
+
+  "inventory": {
+    "inventory_skew_threshold_usd": 25,
+    "inventory_skew_bps_per_1k": 20,
+    "max_skew_bps": 100
+  },
+
+  "funding": {
+    "max_funding_rate_pct_8h": 0.3,
+    "funding_skew_multiplier": 150
+  },
+
+  "profit_taking": {
+    "threshold_usd": 2.0,
+    "aggression_bps": 10.0
+  },
+
+  "safety": {
+    "max_quote_count": 2,
+    "emergency_stop_loss_pct": -10.0,
+    "smart_order_mgmt_enabled": true,
+    "min_margin_ratio_pct": 20.0
+  },
+
+  "exchange": {
+    "price_decimals": 4,
+    "size_decimals": 2,
+    "_comment": "Check Hyperliquid for correct decimals - BTC uses price_decimals: 0"
+  },
+
+  "account": {
+    "subaccount_address": null,
+    "is_subaccount": false,
+    "_comment": "Set subaccount_address to your subaccount 0x... address to use isolated margin"
+  }
+}

@@ -1,0 +1,93 @@
+# ===========================================
+# CREDENTIALS - NEVER COMMIT THESE
+# ===========================================
+
+# Main credentials file
+config.json
+config/config.json
+
+# Any file with sensitive keywords
+*secret*
+*private*
+*.key
+*.pem
+*.p12
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# Seed phrase / mnemonic files
+*seed*
+*mnemonic*
+
+# AI settings with API keys
+.ai_settings.json
+
+# Account registry (contains addresses)
+accounts.json
+
+# Backup credential files
+*.bak
+*.backup
+*.old
+
+# ===========================================
+# DATABASE
+# ===========================================
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ===========================================
+# PYTHON
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# ===========================================
+# IDE / EDITOR
+# ===========================================
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# LOGS & TEMP
+# ===========================================
+*.log
+logs/
+*.tmp
+nohup.out
+data/
+
+# ===========================================
+# OS FILES
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# ===========================================
+# USER CONFIGS (examples are tracked)
+# ===========================================
+config/*.json
+!config/examples/*.json
