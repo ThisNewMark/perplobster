@@ -1,13 +1,16 @@
 ---
 name: perplobster
-description: Deploy automated trading bots on Hyperliquid DEX. Supports perpetual market making, spot market making, and grid trading strategies with a web dashboard. Helps users set up credentials, choose a strategy, configure markets, and start trading. Use when someone wants to trade on Hyperliquid, run a market maker, set up a grid bot, or automate crypto trading.
+description: Deploy automated trading bots on Hyperliquid DEX. Supports perpetual market making, spot market making, and grid trading strategies with a web dashboard. Helps users choose a strategy, configure markets, and start trading. Use when someone wants to trade on Hyperliquid, run a market maker, set up a grid bot, or automate crypto trading.
 license: MIT
-metadata: {"openclaw":{"emoji":"🦞","os":["darwin","linux"],"requires":{"anyBins":["python3","python"],"bins":["git"]}}}
+homepage: https://github.com/ThisNewMark/perplobster
+metadata: {"openclaw":{"emoji":"🦞","homepage":"https://github.com/ThisNewMark/perplobster","os":["darwin","linux"],"requires":{"anyBins":["python3","python"],"bins":["git"],"env":["HL_ACCOUNT_ADDRESS","HL_SECRET_KEY"]}}}
 ---
 
 # Perp Lobster - Hyperliquid Trading Bots
 
 You are helping the user deploy automated trading bots on Hyperliquid DEX using the Perp Lobster system.
+
+Source code: https://github.com/ThisNewMark/perplobster (MIT licensed, open source)
 
 ## IMPORTANT SAFETY WARNINGS
 
@@ -16,38 +19,54 @@ Before doing ANYTHING, tell the user:
 2. **Use a subaccount** with limited funds. Never put all funds in a bot.
 3. **Start small.** Use minimum order sizes until comfortable.
 4. **Monitor actively** until they understand bot behavior.
-5. **Their private key** will be stored in a local `.env` file. It never leaves their machine.
+
+## SECURITY RULES
+
+- **NEVER ask the user to paste their private key in chat.** Private keys must only be entered by the user directly into the `.env` file using a text editor. Tell them: "Open the .env file in a text editor and paste your credentials there. Do NOT share your private key in this chat."
+- **NEVER log, echo, or display the contents of `.env`** or any file containing credentials.
+- The `.env` file stays local on the user's machine and is excluded from git via `.gitignore`.
+- Recommend the user **inspect the repository** before running setup: `cat setup.sh` to review what it does.
+- The optional `ANTHROPIC_API_KEY` env var is used only for the AI dashboard analysis feature and is sent to Anthropic's API. Users should treat it as sensitive.
 
 ## Setup Flow
 
 ### Step 1: Clone and Install
 
+Clone the open-source repository and review the setup script before running:
+
 ```bash
 git clone https://github.com/ThisNewMark/perplobster.git
 cd perplobster
+```
+
+Tell the user: **"Before running setup, you can inspect the script with `cat setup.sh` to see exactly what it does. It creates a Python virtual environment, installs pip dependencies, and initializes a local SQLite database. No data is sent externally."**
+
+Then run:
+```bash
 chmod +x setup.sh
 ./setup.sh
 ```
 
-This creates a virtual environment, installs dependencies, and initializes the database.
-
 ### Step 2: Configure Credentials
 
-The user needs their Hyperliquid wallet address and private key. Ask them for these.
+**IMPORTANT: Do NOT ask the user for their private key in this conversation.**
 
-Edit the `.env` file:
-```bash
-# Edit .env with the user's credentials
-HL_ACCOUNT_ADDRESS=0xTheirWalletAddress
-HL_SECRET_KEY=their_private_key_hex
+Tell the user to edit the `.env` file directly in a text editor:
+
+```
+Open the .env file that was created during setup and fill in your Hyperliquid credentials:
+
+  HL_ACCOUNT_ADDRESS=0xYourWalletAddress
+  HL_SECRET_KEY=your_private_key_hex
+
+You can use nano, vim, or any text editor:
+  nano .env
+
+The private key is a 64-character hex string without the 0x prefix.
+Your credentials stay local in this file and are never transmitted by the bot.
 ```
 
-**CRITICAL**: The private key is a hex string. It should NOT have a `0x` prefix in the .env file. It's typically 64 hex characters.
-
-If the user wants AI analysis features on the dashboard, also set:
-```
-ANTHROPIC_API_KEY=sk-ant-their-key
-```
+If the user wants AI analysis features on the dashboard, they can optionally add their Anthropic API key to the same `.env` file.
 
 ### Step 3: Choose a Strategy
 
@@ -83,7 +102,6 @@ for i, asset in enumerate(universe):
     if asset['name'].upper() == 'MARKET_NAME_HERE':
         ctx = meta[1][i]
         mark = float(ctx['markPx'])
-        # Hyperliquid uses 5 significant figures
         if mark >= 10000: decimals = 1
         elif mark >= 1000: decimals = 2
         elif mark >= 100: decimals = 3
