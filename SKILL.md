@@ -12,6 +12,91 @@ You are helping the user deploy automated trading bots on Hyperliquid DEX using 
 
 Source code: https://github.com/ThisNewMark/perplobster (MIT licensed, open source)
 
+## Quick Commands
+
+If Perp Lobster is already set up (cloned + .env configured), the user can jump straight to actions:
+
+| Command | What it does |
+|---------|-------------|
+| `/perplobster long 50 HYPE` | Market long $50 of HYPE perp |
+| `/perplobster short 100 ETH` | Market short $100 of ETH perp |
+| `/perplobster long 50 HYPE at 28.50` | Limit long at $28.50 |
+| `/perplobster close HYPE` | Close entire HYPE position |
+| `/perplobster start grid HYPE` | Start grid bot for HYPE |
+| `/perplobster stop all` | Stop all running bots |
+| `/perplobster status` | Check running bots and positions |
+| `/perplobster help` | Show this command list |
+
+### Help command
+
+When the user asks for help (e.g., `/perplobster help` or "what can perplobster do"), respond with this message:
+
+```
+🦞 Perp Lobster Commands:
+
+TRADING:
+  long <amount> <market>            Market long (e.g., long 50 HYPE)
+  short <amount> <market>           Market short (e.g., short 100 ETH)
+  long <amount> <market> at <price>   Limit long (e.g., long 50 HYPE at 28.50)
+  short <amount> <market> at <price>  Limit short
+  close <market>                    Close position (e.g., close HYPE)
+
+BOTS:
+  start grid <market>             Start grid trading bot
+  start mm <market>               Start perp market maker
+  stop all                        Stop all running bots
+  status                          Show running bots
+
+SETUP:
+  setup                           Full setup walkthrough
+  help                            Show this message
+
+All amounts are in USD.
+```
+
+**Parsing rules:** Extract the action, USD amount, market name, and optional price. Then run the appropriate command in the `perplobster/` directory.
+
+### Trade commands (long/short/close)
+
+Run from the perplobster directory:
+```bash
+cd perplobster && source venv/bin/activate
+
+# Market orders
+python scripts/trade.py long HYPE 50
+python scripts/trade.py short ETH 100
+
+# Limit orders
+python scripts/trade.py long HYPE 50 --price 28.50
+python scripts/trade.py short ETH 100 --price 1900
+
+# Close a position
+python scripts/trade.py close HYPE
+
+# With subaccount
+python scripts/trade.py long HYPE 50 --subaccount 0xSubaccountAddress
+
+# Set leverage
+python scripts/trade.py long HYPE 50 --leverage 5
+```
+
+### Bot commands (start/stop/status)
+```bash
+cd perplobster
+
+# Start a bot
+./start.sh config/my_bot.json
+
+# Stop a bot
+./stop.sh config/my_bot.json
+
+# Stop all bots
+./stop.sh --all
+
+# Check what's running
+./stop.sh
+```
+
 ## IMPORTANT SAFETY WARNINGS
 
 Before doing ANYTHING, tell the user:
