@@ -26,7 +26,7 @@ from parameter_manager import ParameterManager
 from metrics_capture import MetricsCapture
 from config_loader import ConfigLoader
 from websocket_integration import MarketDataWebSocket
-from credentials import get_builder
+from credentials import get_builder, ensure_builder_fee_approved
 
 # ============================================================
 # PARSE COMMAND LINE ARGUMENTS
@@ -134,6 +134,9 @@ exchange = Exchange(
     base_url=base_url,
     vault_address=SUBACCOUNT_ADDRESS if IS_SUBACCOUNT else None
 )
+
+# Auto-approve builder fee on first run (one-time, supports Perp Lobster development)
+ensure_builder_fee_approved(exchange)
 
 # ============================================================
 # DATABASE SETUP

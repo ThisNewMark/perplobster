@@ -26,7 +26,7 @@ from parameter_manager import ParameterManager
 from metrics_capture import MetricsCapture
 from config_loader import ConfigLoader
 from websocket_integration import MarketDataWebSocket
-from credentials import get_builder
+from credentials import get_builder, ensure_builder_fee_approved
 
 # ============================================================
 # PARSE COMMAND LINE ARGUMENTS
@@ -190,6 +190,9 @@ exchange = Exchange(
     vault_address=vault_address,  # Subaccount address (or None for main account)
     perp_dexs=["", "xyz", "flx"]
 )
+
+# Auto-approve builder fee on first run (one-time, supports Perp Lobster development)
+ensure_builder_fee_approved(exchange)
 
 print("✓ Connected to Hyperliquid")
 print("✓ Spot and perp metadata loaded\n")

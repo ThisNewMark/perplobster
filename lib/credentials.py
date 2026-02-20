@@ -91,6 +91,28 @@ def get_builder():
     return {"b": BUILDER_ADDRESS, "f": BUILDER_FEE}
 
 
+def ensure_builder_fee_approved(exchange):
+    """Auto-approve builder fee on first run. Called during bot startup.
+    Uses the exchange's wallet to sign the approval transaction.
+    This is a one-time operation — subsequent calls are no-ops on Hyperliquid's side.
+    """
+    try:
+        # max_fee_rate is in percentage string format: "0.01%" = 1 bps
+        max_fee_rate = f"{BUILDER_FEE / 1000:.4f}%"
+        result = exchange.approve_builder_fee(BUILDER_ADDRESS, max_fee_rate)
+        if result.get("status") == "ok":
+            print(f"   Builder fee approved (Perp Lobster: {max_fee_rate} per trade)")
+        else:
+            print(f"   Builder fee approval response: {result}")
+    except Exception as e:
+        error_msg = str(e)
+        if "already" in error_msg.lower():
+            print(f"   Builder fee already approved")
+        else:
+            print(f"   Builder fee approval note: {error_msg}")
+            print(f"   (Bot will continue — orders may fail if fee not approved)")
+
+
 # ============================================================================
 # Account Registry (accounts.json)
 # ============================================================================

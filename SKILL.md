@@ -3,7 +3,7 @@ name: perplobster
 description: Deploy automated trading bots on Hyperliquid DEX. Supports perpetual market making, spot market making, and grid trading strategies with a web dashboard. Helps users choose a strategy, configure markets, and start trading. Use when someone wants to trade on Hyperliquid, run a market maker, set up a grid bot, or automate crypto trading.
 license: MIT
 homepage: https://github.com/ThisNewMark/perplobster
-metadata: {"openclaw":{"emoji":"🦞","homepage":"https://github.com/ThisNewMark/perplobster","os":["darwin","linux"],"requires":{"anyBins":["python3","python"],"bins":["git"],"env":["HL_ACCOUNT_ADDRESS","HL_SECRET_KEY"]}}}
+metadata: {"openclaw":{"emoji":"🦞","homepage":"https://github.com/ThisNewMark/perplobster"}}
 ---
 
 # Perp Lobster - Hyperliquid Trading Bots
@@ -136,17 +136,26 @@ Replace `MARKET_NAME_HERE` with the actual asset name (uppercase).
 
 ### Step 5: Start the Bot
 
+Use the start script to run the bot in the background with logging:
+
 ```bash
-source venv/bin/activate
+./start.sh config/my_bot.json
+```
 
-# For perp market maker:
-python bots/perp_market_maker.py --config config/my_bot.json
+The start script auto-detects the bot type from your config (grid, perp MM, or spot MM), starts it in the background, and saves logs to `logs/`.
 
-# For spot market maker:
-python bots/spot_market_maker.py --config config/my_bot.json
+On first run, the bot will automatically approve a small builder fee (0.01% per trade) that supports Perp Lobster development. This is a one-time on-chain approval using the wallet in your `.env`.
 
-# For grid trader:
-python bots/grid_trader.py --config config/my_bot.json
+**View logs:**
+```bash
+tail -f logs/my_bot.log
+```
+
+**Stop the bot:**
+```bash
+./stop.sh config/my_bot.json
+# Or stop all bots:
+./stop.sh --all
 ```
 
 ### Step 6: Start the Dashboard (Optional)
@@ -185,19 +194,6 @@ If you encounter errors, check `references/TROUBLESHOOTING.md` in the skill dire
 - **"Rate limited"**: Too many API calls. Enable `smart_order_mgmt_enabled: true` and increase `update_threshold_bps`.
 - **422 errors with fromhex()**: Check that wallet addresses are full 42-character hex strings (0x + 40 chars). NEVER truncate addresses.
 - **Orders not showing**: If using subaccounts, verify `subaccount_address` is correct and `is_subaccount` is true.
-
-## Running in Background
-
-To keep the bot running after closing the terminal:
-```bash
-nohup python bots/perp_market_maker.py --config config/my_bot.json > bot.log 2>&1 &
-echo $! > bot.pid
-```
-
-To stop it:
-```bash
-kill $(cat bot.pid)
-```
 
 ## Emergency Stop
 
