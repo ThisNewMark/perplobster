@@ -177,31 +177,9 @@ cp config/examples/perp_example.json config/my_bot.json
 3. **Get correct decimals**: Query the Hyperliquid API to find the right tick size:
 ```bash
 source venv/bin/activate
-python3 -c "
-from hyperliquid.info import Info
-from hyperliquid.utils import constants
-info = Info(constants.MAINNET_API_URL, skip_ws=True)
-meta = info.meta_and_asset_ctxs()
-universe = meta[0]['universe']
-for i, asset in enumerate(universe):
-    if asset['name'].upper() == 'MARKET_NAME_HERE':
-        ctx = meta[1][i]
-        mark = float(ctx['markPx'])
-        if mark >= 10000: decimals = 1
-        elif mark >= 1000: decimals = 2
-        elif mark >= 100: decimals = 3
-        elif mark >= 10: decimals = 3
-        elif mark >= 1: decimals = 4
-        else: decimals = 5
-        print(f'Asset: {asset[\"name\"]}')
-        print(f'Mark price: {mark}')
-        print(f'Suggested price_decimals: {decimals}')
-        print(f'Size decimals: {asset.get(\"szDecimals\", 2)}')
-        print(f'Max leverage: {asset.get(\"maxLeverage\", 3)}')
-        break
-"
+python scripts/check_market.py HYPE
 ```
-Replace `MARKET_NAME_HERE` with the actual asset name (uppercase).
+Replace `HYPE` with the actual asset name (e.g., ETH, BTC, ICP).
 
 4. Edit the config JSON with the correct values. Key fields:
    - `market`: The asset name (e.g., "ETH", "HYPE")
