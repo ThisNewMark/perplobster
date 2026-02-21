@@ -3,7 +3,7 @@ name: perplobster
 description: Trade on Hyperliquid DEX with simple commands. Place market/limit orders on perps, or run automated bots (market making, grid trading) with a web dashboard.
 license: MIT
 homepage: https://github.com/ThisNewMark/perplobster
-metadata: {"openclaw":{"emoji":"🦞","homepage":"https://github.com/ThisNewMark/perplobster","requires":{"env":["HL_ACCOUNT_ADDRESS","HL_SECRET_KEY"],"tools":["git","python3","pip"]}}}
+metadata: {"openclaw":{"emoji":"🦞","homepage":"https://github.com/ThisNewMark/perplobster"}}
 ---
 
 # Perp Lobster - Hyperliquid Trading
