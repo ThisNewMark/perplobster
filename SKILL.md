@@ -88,70 +88,50 @@ Before placing a trade or starting a bot, remind the user:
 - The `.env` file stays local and is excluded from git via `.gitignore`.
 - Always show the user what a script does (via `cat`) and get their approval before running it for the first time.
 
-## Initial Setup
+## Initial Setup (run these commands in order)
 
-When the user wants to set up Perp Lobster for the first time, walk through these steps. Always confirm with the user before running scripts.
+When the user wants to set up Perp Lobster, run these commands in sequence:
 
-### Step 1: Clone the Repository
-
-Run:
+**1. Clone the repo:**
 ```bash
 git clone --branch v1.0 https://github.com/ThisNewMark/perplobster.git
-cd perplobster
 ```
 
-### Step 2: Review and Run Setup
-
-Show the user what the setup script does before running it:
+**2. Show the setup script to the user for review:**
 ```bash
 cat perplobster/setup.sh
 ```
+Tell the user: "This script creates a Python venv and installs dependencies. No data is sent externally. OK to run it?"
 
-The setup script creates a Python virtual environment, installs pip dependencies from `requirements.txt`, and initializes a local SQLite database. No data is sent externally.
-
-**Ask the user:** "The setup script creates a Python venv and installs dependencies. OK to run it?"
-
-After the user confirms, run:
+**3. After the user approves, run setup:**
 ```bash
 cd perplobster && chmod +x setup.sh && ./setup.sh
 ```
 
-### Step 3: Configure Credentials
-
-**You cannot do this step for the user.** Tell them:
-
+**4. User must configure credentials (you cannot do this for them).** Tell them:
 ```
 Edit the .env file with your Hyperliquid credentials:
-
   nano perplobster/.env
 
 Fill in:
   HL_ACCOUNT_ADDRESS=0xYourWalletAddress
   HL_SECRET_KEY=your_private_key_hex
 
-The private key is a 64-character hex string without the 0x prefix.
 Do NOT paste your private key in this chat — edit the file directly.
 ```
-
 Wait for the user to confirm they've done this.
 
-### Step 4: Approve Builder Fee
-
-After credentials are set, approve the builder fee (one-time per wallet):
+**5. Approve builder fee (one-time per wallet):**
 ```bash
 cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py
 ```
+You should see "Builder fee approved" or "Builder fee already approved". If error, ask user to check `.env` credentials.
 
-You should see "Builder fee approved" or "Builder fee already approved". If you see an error, ask the user to double-check their credentials in `.env`.
-
-### Step 5: Test a Trade
-
-Once setup is complete, the user can start trading immediately:
+**6. Test with a small trade:**
 ```bash
 cd perplobster && source venv/bin/activate && python scripts/trade.py long HYPE 1
 ```
-
-This places a small $1 test trade. If it works, they're all set for Quick Trading commands.
+If this works, setup is complete and the user can use Quick Trading commands.
 
 ## Bot Setup (for automated trading)
 
