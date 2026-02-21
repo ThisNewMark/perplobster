@@ -185,9 +185,10 @@ account = Account.from_key(secret_key)
 # For subaccounts: wallet signs with main account, vault_address = subaccount
 # For main account: vault_address = None
 exchange = Exchange(
-    wallet=account,           # Main account signs all transactions
+    wallet=account,
     base_url=base_url,
-    vault_address=vault_address,  # Subaccount address (or None for main account)
+    account_address=main_account_address or None,
+    vault_address=vault_address,
     perp_dexs=["", "xyz", "flx"]
 )
 
@@ -219,7 +220,8 @@ def reinitialize_connections():
         new_exchange = Exchange(
             wallet=account,
             base_url=constants.MAINNET_API_URL,
-            vault_address=vault_address,  # Use same vault_address as initial setup
+            account_address=main_account_address or None,
+            vault_address=vault_address,
             perp_dexs=["", "xyz", "flx"]
         )
 

@@ -32,13 +32,15 @@ def main():
         sys.exit(1)
 
     secret_key = creds['secret_key']
+    account_address = creds.get('account_address')
     account = Account.from_key(secret_key)
 
     vault_address = args.subaccount if args.subaccount else None
     exchange = Exchange(
         wallet=account,
         base_url=constants.MAINNET_API_URL,
-        vault_address=vault_address
+        vault_address=vault_address,
+        account_address=account_address
     )
 
     print("Approving Perp Lobster builder fee...")

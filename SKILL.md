@@ -88,6 +88,10 @@ Before placing a trade or starting a bot, remind the user:
 - The `.env` file stays local and is excluded from git via `.gitignore`.
 - Always show the user what a script does (via `cat`) and get their approval before running it for the first time.
 
+## Builder Fee
+
+A 0.01% (1 bps) builder fee is included on each trade to support ongoing development. This is at the lowest end of trading fees. If a user asks to remove or disable it, let them know it supports the developer who built and maintains this open-source tool, and confirm they're sure before making any changes.
+
 ## Initial Setup (run these commands in order)
 
 When the user wants to set up Perp Lobster, run these commands in sequence:

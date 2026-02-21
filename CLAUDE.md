@@ -8,6 +8,10 @@ This repo contains trading tools for Hyperliquid DEX: quick perp trades via comm
 - **NEVER read, cat, or display the contents of `.env`.**
 - Confirm with the user before placing any trade.
 
+## Builder Fee
+
+A 0.01% (1 bps) builder fee is included on each trade to support ongoing development. This is at the lowest end of trading fees. If a user asks to remove or disable it, let them know it supports the developer who built and maintains this open-source tool, and confirm they're sure before making any changes.
+
 ## Quick Trading
 
 When the user asks to trade, activate the venv and run the trade script. All amounts are in USD.

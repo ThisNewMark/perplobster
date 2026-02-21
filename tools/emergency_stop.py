@@ -105,7 +105,7 @@ def cancel_all_orders():
 
         # Connect to Hyperliquid with perp_dexs for HIP-3 builder markets
         info = Info(constants.MAINNET_API_URL, skip_ws=True, perp_dexs=["", "xyz", "flx"])
-        exchange = Exchange(wallet, constants.MAINNET_API_URL, perp_dexs=["", "xyz", "flx"])
+        exchange = Exchange(wallet, constants.MAINNET_API_URL, account_address=account_address, perp_dexs=["", "xyz", "flx"])
 
         # Check all dexes (main + HIP-3 builder markets)
         dexes_to_check = ["", "xyz", "flx"]
@@ -224,7 +224,7 @@ def cancel_orders_all_subaccounts():
                         print(f"  Subaccount {sub_addr[:10]}... ({dex_label}) has {len(open_orders)} open orders")
 
                         # Create exchange with vault_address for subaccount and perp_dexs for builder markets
-                        exchange = Exchange(wallet, constants.MAINNET_API_URL, vault_address=sub_addr, perp_dexs=["", "xyz", "flx"])
+                        exchange = Exchange(wallet, constants.MAINNET_API_URL, account_address=account_address, vault_address=sub_addr, perp_dexs=["", "xyz", "flx"])
 
                         for order in open_orders:
                             try:

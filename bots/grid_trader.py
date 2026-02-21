@@ -97,12 +97,13 @@ from credentials import get_credentials
 credentials = get_credentials()
 
 secret_key = credentials["secret_key"]
+main_address = credentials.get("account_address", "")
 account = Account.from_key(secret_key)
-account_address = SUBACCOUNT_ADDRESS if IS_SUBACCOUNT else account.address
+account_address = SUBACCOUNT_ADDRESS if IS_SUBACCOUNT else main_address or account.address
 
 print(f"Trading account: {account_address}")
 if IS_SUBACCOUNT:
-    print(f"   (Subaccount of {account.address})")
+    print(f"   (Subaccount of {main_address or account.address})")
 if IS_HIP3_MARKET:
     print(f"HIP-3 market detected: {MARKET_NAME} on {DEX}")
 
@@ -115,12 +116,13 @@ info = Info(base_url=base_url, skip_ws=True, perp_dexs=perp_dexs) if IS_HIP3_MAR
 exchange = Exchange(
     wallet=account,
     base_url=base_url,
-    account_address=account_address,
+    account_address=main_address or None,
     vault_address=SUBACCOUNT_ADDRESS if IS_SUBACCOUNT else None,
     perp_dexs=perp_dexs
 ) if IS_HIP3_MARKET else Exchange(
     wallet=account,
     base_url=base_url,
+    account_address=main_address or None,
     vault_address=SUBACCOUNT_ADDRESS if IS_SUBACCOUNT else None
 )
 

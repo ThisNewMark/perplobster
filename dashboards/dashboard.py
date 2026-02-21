@@ -755,7 +755,7 @@ def api_emergency_stop():
                         # Create exchange with vault_address for subaccounts
                         # Include perp_dexs for HIP-3 builder markets
                         vault = addr if addr != account_address else None
-                        exchange = Exchange(wallet, constants.MAINNET_API_URL, vault_address=vault, perp_dexs=["", "xyz", "flx"])
+                        exchange = Exchange(wallet, constants.MAINNET_API_URL, account_address=account_address, vault_address=vault, perp_dexs=["", "xyz", "flx"])
 
                         for order in open_orders:
                             try:
