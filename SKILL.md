@@ -26,6 +26,8 @@ If Perp Lobster is already set up (the `perplobster/` directory exists and `.env
 | `stop all` | `cd perplobster && ./stop.sh --all` |
 | `status` | `cd perplobster && ./stop.sh` |
 
+**Note:** The trade script (`trade.py`) auto-approves the builder fee on each run. If you see a "Builder fee has not been approved" error, run `python scripts/approve_builder_fee.py` first, then retry the trade. The builder fee is a one-time on-chain approval per wallet.
+
 ### Help command
 
 When the user asks for help (e.g., `/perplobster help` or "what can perplobster do"), respond with this message:
@@ -110,6 +112,23 @@ Wait for the user to confirm they've done this before proceeding.
 
 Optionally, they can add `ANTHROPIC_API_KEY` to the same file for AI dashboard analysis features.
 
+### Step 2b: Approve Builder Fee
+
+After credentials are configured, run the builder fee approval. This is a one-time on-chain approval that must happen before any trades will work:
+
+```bash
+cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py
+```
+
+If using a subaccount:
+```bash
+cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py --subaccount 0xSubaccountAddress
+```
+
+You should see "Builder fee approved" or "Builder fee already approved". If you see an error, the credentials in `.env` are likely wrong — ask the user to double-check them.
+
+**IMPORTANT:** If you ever see a "Builder fee has not been approved" error when trading, run this script again to fix it.
+
 ### Step 3: Choose a Strategy
 
 Ask the user what they want to do, then match to one of these:
@@ -164,7 +183,7 @@ cd perplobster && ./start.sh config/my_bot.json
 
 The start script auto-detects the bot type, starts it in the background, and saves logs to `logs/`.
 
-On first run, the bot automatically approves a small builder fee. This is a one-time on-chain approval.
+The builder fee should already be approved from Step 2b. If not, the bot will attempt to auto-approve on startup.
 
 To check logs:
 ```bash
@@ -205,6 +224,7 @@ Then tell the user to open http://localhost:5050 in a browser.
 
 If you encounter errors, check `references/TROUBLESHOOTING.md` in the skill directory for common issues. Key ones:
 
+- **"Builder fee has not been approved"**: Run `cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py` to approve. If it fails, the credentials in `.env` are wrong.
 - **"Price must be divisible by tick size"**: Wrong `price_decimals` in config. Re-run `python scripts/check_market.py` for correct values.
 - **"Post-only order would cross"**: Spread is too tight. Increase `base_spread_bps`.
 - **"Rate limited"**: Too many API calls. Enable `smart_order_mgmt_enabled: true` and increase `update_threshold_bps`.
