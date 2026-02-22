@@ -17,22 +17,24 @@ class MarketDataWebSocket:
     Subscribes to orderbook, fills, and user events
     """
 
-    def __init__(self, spot_coin: str, account_address: str, pair_name: str = None, update_threshold_bps: float = 5.0, on_update_callback: Optional[Callable] = None):
+    def __init__(self, spot_coin: str, account_address: str, pair_name: str = None, update_threshold_bps: float = 5.0, on_update_callback: Optional[Callable] = None, dex: str = ""):
         """
         Initialize WebSocket manager
 
         Args:
-            spot_coin: Spot market identifier (e.g., "@254" for KNTQ, "@260" for XMR1)
+            spot_coin: Market identifier (e.g., "@254" for KNTQ, "@260" for XMR1, "xyz:GOLD" for HIP-3)
             account_address: User wallet address for fills/events
             pair_name: Optional pair name (e.g., "PURR/USDC") for fill matching
             update_threshold_bps: Price change threshold in bps to trigger update (default: 5.0)
             on_update_callback: Optional callback when significant update occurs
+            dex: HIP-3 builder dex prefix (e.g., "xyz", "flx") or "" for standard markets
         """
         self.spot_coin = spot_coin
         self.pair_name = pair_name  # e.g., "PURR/USDC"
         self.account_address = account_address
         self.update_threshold_bps = update_threshold_bps
         self.on_update_callback = on_update_callback
+        self.dex = dex  # HIP-3 builder dex prefix
 
         # Thread locks for shared state
         self._orderbook_lock = threading.Lock()
@@ -79,10 +81,13 @@ class MarketDataWebSocket:
             time.sleep(1)
             print(f"   📡 WebSocket thread started")
 
-            # Subscribe to orderbook updates for our spot market
+            # Subscribe to orderbook updates for our market
             # Note: For spot markets, use @{index} format (e.g., "@260" for XMR1)
+            # For HIP-3 builder perps, include dex parameter (e.g., "xyz:GOLD" with dex="xyz")
             print(f"   📊 Subscribing to orderbook for {self.spot_coin}...")
             orderbook_subscription = {"type": "l2Book", "coin": self.spot_coin}
+            if self.dex:
+                orderbook_subscription["dex"] = self.dex
             print(f"      Subscription: {orderbook_subscription}")
             orderbook_sub_id = self.ws_manager.subscribe(
                 subscription=orderbook_subscription,

@@ -279,28 +279,37 @@ def get_anchor_price():
     try:
         # Fetch perp oracle price if enabled
         if use_oracle_price:
-            # Get oracle price from meta_and_asset_ctxs
-            # Response format: [{"universe": [...], "assetCtxs": [...]}]
-            meta_response = info.meta_and_asset_ctxs()
-
-            # Extract universe (list of asset contexts)
-            universe = []
-            if isinstance(meta_response, list) and len(meta_response) > 0:
-                universe = meta_response[0].get('universe', [])
-
-            # Find the asset context for our perp
             oracle_price = None
-            for asset_ctx in universe:
-                if asset_ctx.get('name') == PERP_COIN:
-                    oracle_px = asset_ctx.get('oraclePx')
-                    if oracle_px:
-                        oracle_price = float(oracle_px)
-                        break
-                    # Fallback to markPx if oraclePx not available
-                    mark_px = asset_ctx.get('markPx')
-                    if mark_px:
-                        oracle_price = float(mark_px)
-                        break
+            perp_coin_bare = PERP_COIN.split(':')[-1] if ':' in PERP_COIN else PERP_COIN
+
+            if PERP_DEX:
+                # HIP-3 perp oracle: meta_and_asset_ctxs() doesn't support dex param,
+                # so use all_mids(dex=) as price source instead
+                try:
+                    mids = info.all_mids(dex=PERP_DEX)
+                    for mid_coin, mid_val in mids.items():
+                        mid_bare = mid_coin.split(':')[-1] if ':' in mid_coin else mid_coin
+                        if mid_bare.upper() == perp_coin_bare.upper():
+                            oracle_price = float(mid_val)
+                            break
+                except Exception:
+                    pass
+            else:
+                # Standard perp oracle: meta_and_asset_ctxs has oraclePx/markPx
+                meta_response = info.meta_and_asset_ctxs()
+                universe = []
+                if isinstance(meta_response, list) and len(meta_response) > 0:
+                    universe = meta_response[0].get('universe', [])
+                for asset_ctx in universe:
+                    if asset_ctx.get('name') == PERP_COIN:
+                        oracle_px = asset_ctx.get('oraclePx')
+                        if oracle_px:
+                            oracle_price = float(oracle_px)
+                            break
+                        mark_px = asset_ctx.get('markPx')
+                        if mark_px:
+                            oracle_price = float(mark_px)
+                            break
 
             if not oracle_price:
                 print(f"   ℹ️  Oracle price not available for {PERP_COIN}, using perp book")

@@ -9,7 +9,9 @@ Usage:
   python scripts/trade.py long HYPE 50 --price 29.50
   python scripts/trade.py short ETH 100 --price 1900 --subaccount 0x...
   python scripts/trade.py close HYPE
-  python scripts/trade.py close HYPE --subaccount 0x...
+  python scripts/trade.py long xyz:GOLD 50          # HIP-3 builder market
+  python scripts/trade.py short flx:XMR 100         # HIP-3 builder market
+  python scripts/trade.py close xyz:GOLD             # Close HIP-3 position
 """
 
 import argparse
@@ -24,31 +26,88 @@ from hyperliquid.exchange import Exchange
 from hyperliquid.utils import constants
 from credentials import get_credentials, get_builder, ensure_builder_fee_approved
 
+# Known HIP-3 builder dex prefixes
+KNOWN_DEXES = ["", "xyz", "flx"]
 
-def get_asset_info(info, asset_name):
-    """Get price decimals and size decimals for an asset."""
+
+def parse_market_name(raw_name):
+    """Parse market input, handling HIP-3 dex:COIN format.
+
+    Returns:
+        (market_name, dex) - e.g. ("xyz:GOLD", "xyz") or ("HYPE", "")
+    """
+    if ':' in raw_name:
+        dex, coin = raw_name.split(':', 1)
+        return f"{dex.lower()}:{coin.upper()}", dex.lower()
+    return raw_name.upper(), ""
+
+
+def estimate_price_decimals(price):
+    """Estimate appropriate price decimals from a price value."""
+    if price >= 10000:
+        return 1
+    elif price >= 1000:
+        return 2
+    elif price >= 100:
+        return 3
+    elif price >= 10:
+        return 3
+    elif price >= 1:
+        return 4
+    else:
+        return 5
+
+
+def get_asset_info(info, market_name, dex=""):
+    """Get price decimals and size decimals for an asset.
+
+    For standard markets, uses meta_and_asset_ctxs() which includes markPx.
+    For HIP-3 builder markets, uses meta(dex=) + all_mids(dex=) since
+    meta_and_asset_ctxs() only returns the standard dex.
+    """
+    if dex:
+        # HIP-3: meta_and_asset_ctxs() doesn't support dex param,
+        # so fetch metadata and mids separately
+        hip3_meta = info.meta(dex=dex)
+        hip3_universe = hip3_meta.get('universe', [])
+        coin = market_name.split(':', 1)[1] if ':' in market_name else market_name
+        for asset in hip3_universe:
+            asset_name = asset['name']
+            # SDK may return "SILVER" or "xyz:SILVER" — match either way
+            asset_bare = asset_name.split(':')[-1] if ':' in asset_name else asset_name
+            if asset_bare.upper() == coin.upper() or asset_name.upper() == market_name.upper():
+                # Get mid price from all_mids (keys may also be bare or prefixed)
+                mids = info.all_mids(dex=dex)
+                mid_price = None
+                for mid_coin, mid_val in mids.items():
+                    mid_bare = mid_coin.split(':')[-1] if ':' in mid_coin else mid_coin
+                    if mid_bare.upper() == coin.upper():
+                        mid_price = float(mid_val)
+                        break
+                if mid_price is None or mid_price == 0:
+                    print(f"  Warning: No mid price for {market_name}, market may be inactive")
+                    return None
+                full_name = f"{dex}:{asset_bare}" if ':' not in asset_name else asset_name
+                return {
+                    'name': full_name,
+                    'mark_price': mid_price,
+                    'price_decimals': estimate_price_decimals(mid_price),
+                    'size_decimals': asset.get('szDecimals', 2),
+                    'max_leverage': asset.get('maxLeverage', 3),
+                }
+        return None
+
+    # Standard markets: meta_and_asset_ctxs includes markPx
     meta = info.meta_and_asset_ctxs()
     universe = meta[0]['universe']
     for i, asset in enumerate(universe):
-        if asset['name'].upper() == asset_name.upper():
+        if asset['name'].upper() == market_name.upper():
             ctx = meta[1][i]
             mark = float(ctx['markPx'])
-            if mark >= 10000:
-                price_dec = 1
-            elif mark >= 1000:
-                price_dec = 2
-            elif mark >= 100:
-                price_dec = 3
-            elif mark >= 10:
-                price_dec = 3
-            elif mark >= 1:
-                price_dec = 4
-            else:
-                price_dec = 5
             return {
                 'name': asset['name'],
                 'mark_price': mark,
-                'price_decimals': price_dec,
+                'price_decimals': estimate_price_decimals(mark),
                 'size_decimals': asset.get('szDecimals', 2),
                 'max_leverage': asset.get('maxLeverage', 3),
             }
@@ -58,7 +117,7 @@ def get_asset_info(info, asset_name):
 def main():
     parser = argparse.ArgumentParser(description='Perp Lobster - Place trades on Hyperliquid')
     parser.add_argument('action', choices=['long', 'short', 'close'], help='Trade action')
-    parser.add_argument('market', help='Market name (e.g., HYPE, ETH, BTC)')
+    parser.add_argument('market', help='Market name (e.g., HYPE, ETH, xyz:GOLD, flx:XMR)')
     parser.add_argument('size_usd', nargs='?', type=float, default=None, help='Order size in USD (not needed for close)')
     parser.add_argument('--price', type=float, default=None, help='Limit price (omit for market order)')
     parser.add_argument('--subaccount', type=str, default=None, help='Subaccount address')
@@ -70,6 +129,10 @@ def main():
     if args.action != 'close' and args.size_usd is None:
         parser.error("size_usd is required for long/short orders")
 
+    # Parse market name (handles HIP-3 dex:COIN format)
+    market_name, dex = parse_market_name(args.market)
+    is_hip3 = dex != ""
+
     # Load credentials
     creds = get_credentials()
     if not creds.get('secret_key'):
@@ -80,23 +143,28 @@ def main():
     account_address = creds.get('account_address')
     account = Account.from_key(secret_key)
 
-    # Setup API
-    info = Info(constants.MAINNET_API_URL, skip_ws=True)
+    # Setup API (include perp_dexs for HIP-3 builder market support)
+    info = Info(constants.MAINNET_API_URL, skip_ws=True, perp_dexs=KNOWN_DEXES)
     vault_address = args.subaccount if args.subaccount else None
     exchange = Exchange(
         wallet=account,
         base_url=constants.MAINNET_API_URL,
         vault_address=vault_address,
-        account_address=account_address
+        account_address=account_address,
+        perp_dexs=KNOWN_DEXES
     )
 
     # Auto-approve builder fee
     ensure_builder_fee_approved(exchange)
 
     # Get asset info
-    asset_info = get_asset_info(info, args.market)
+    asset_info = get_asset_info(info, market_name, dex=dex)
     if not asset_info:
-        print(f"Error: Market '{args.market}' not found on Hyperliquid")
+        print(f"Error: Market '{market_name}' not found on Hyperliquid")
+        if not is_hip3:
+            print(f"  For HIP-3 builder markets, use format: xyz:GOLD or flx:XMR")
+        else:
+            print(f"  Check the ticker is correct on https://app.hyperliquid.xyz/trade/{market_name}")
         sys.exit(1)
 
     market = asset_info['name']
@@ -108,6 +176,8 @@ def main():
     print(f"  Perp Lobster - {args.action.upper()} {market}")
     print(f"{'='*50}")
     print(f"  Mark price: ${mark_price}")
+    if is_hip3:
+        print(f"  Market type: HIP-3 builder ({dex})")
     if args.subaccount:
         print(f"  Subaccount: {args.subaccount[:10]}...")
 

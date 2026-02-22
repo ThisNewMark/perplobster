@@ -10,6 +10,7 @@ import subprocess
 import signal
 import threading
 import time
+import queue
 from datetime import datetime
 from typing import Dict, Optional, List
 from collections import deque
@@ -27,10 +28,27 @@ class BotProcess:
         self._log_thread = None
         self._stop_logging = False
         self._log_callback = log_callback  # Called when new log line arrives
+        self._subscribers: List[queue.Queue] = []  # SSE log subscribers
+        self._subscribers_lock = threading.Lock()
 
     def set_log_callback(self, callback):
         """Set callback for real-time log streaming"""
         self._log_callback = callback
+
+    def subscribe_logs(self) -> queue.Queue:
+        """Subscribe to real-time log lines via a queue (for SSE streaming)"""
+        q = queue.Queue(maxsize=500)
+        with self._subscribers_lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe_logs(self, q: queue.Queue):
+        """Unsubscribe from log streaming"""
+        with self._subscribers_lock:
+            try:
+                self._subscribers.remove(q)
+            except ValueError:
+                pass
 
     def start_log_capture(self):
         """Start capturing stdout/stderr in background thread"""
@@ -53,6 +71,16 @@ class BotProcess:
                             self._log_callback(self.config_file, log_line)
                         except Exception:
                             pass  # Don't let callback errors stop log capture
+                    # Push to SSE subscribers
+                    with self._subscribers_lock:
+                        dead = []
+                        for q in self._subscribers:
+                            try:
+                                q.put_nowait(log_line)
+                            except queue.Full:
+                                dead.append(q)
+                        for q in dead:
+                            self._subscribers.remove(q)
         except Exception as e:
             self.log_buffer.append(f"[ERROR] Log capture failed: {e}")
 
@@ -100,6 +128,138 @@ class BotProcess:
         }
 
 
+class ExternalBotProcess:
+    """Wraps a bot started externally (e.g. via start.sh) that we discover by PID file.
+    Reads logs from the log file instead of a subprocess pipe."""
+
+    def __init__(self, config_file: str, pid: int, bot_type: str, log_file: str, pid_file: str):
+        self.config_file = config_file
+        self._pid = pid
+        self.bot_type = bot_type
+        self.log_file = log_file
+        self.pid_file = pid_file
+        # Use PID file mtime as approximate start time
+        try:
+            self.started_at = datetime.fromtimestamp(os.path.getmtime(pid_file))
+        except OSError:
+            self.started_at = datetime.now()
+        self.log_buffer = deque(maxlen=200)
+        self._log_thread = None
+        self._stop_logging = False
+        self._subscribers: List[queue.Queue] = []
+        self._subscribers_lock = threading.Lock()
+        self._last_log_pos = 0
+
+        # Load existing log lines into buffer
+        self._load_existing_logs()
+
+    def _load_existing_logs(self):
+        """Read existing log file into buffer."""
+        try:
+            if os.path.exists(self.log_file):
+                with open(self.log_file, 'r') as f:
+                    lines = f.readlines()
+                    for line in lines[-200:]:
+                        self.log_buffer.append(line.rstrip())
+                    self._last_log_pos = f.tell()
+        except Exception:
+            pass
+
+    def subscribe_logs(self) -> queue.Queue:
+        q = queue.Queue(maxsize=500)
+        with self._subscribers_lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe_logs(self, q: queue.Queue):
+        with self._subscribers_lock:
+            try:
+                self._subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def start_log_capture(self):
+        """Tail the log file for new lines."""
+        self._stop_logging = False
+        self._log_thread = threading.Thread(target=self._tail_log_file, daemon=True)
+        self._log_thread.start()
+
+    def _tail_log_file(self):
+        """Background thread that tails the log file."""
+        try:
+            while not self._stop_logging and self.is_running:
+                try:
+                    with open(self.log_file, 'r') as f:
+                        f.seek(self._last_log_pos)
+                        new_lines = f.readlines()
+                        if new_lines:
+                            for line in new_lines:
+                                stripped = line.rstrip()
+                                if stripped:
+                                    self.log_buffer.append(stripped)
+                                    with self._subscribers_lock:
+                                        dead = []
+                                        for q in self._subscribers:
+                                            try:
+                                                q.put_nowait(stripped)
+                                            except queue.Full:
+                                                dead.append(q)
+                                        for q in dead:
+                                            self._subscribers.remove(q)
+                        self._last_log_pos = f.tell()
+                except FileNotFoundError:
+                    pass
+                time.sleep(1)
+        except Exception:
+            pass
+
+    def stop_log_capture(self):
+        self._stop_logging = True
+
+    @property
+    def is_running(self) -> bool:
+        try:
+            os.kill(self._pid, 0)  # Signal 0 = check if alive
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+    @property
+    def pid(self) -> int:
+        return self._pid
+
+    @property
+    def uptime_seconds(self) -> int:
+        return int((datetime.now() - self.started_at).total_seconds())
+
+    @property
+    def uptime_str(self) -> str:
+        secs = self.uptime_seconds
+        if secs < 60:
+            return f"{secs}s"
+        elif secs < 3600:
+            return f"{secs // 60}m {secs % 60}s"
+        else:
+            hours = secs // 3600
+            mins = (secs % 3600) // 60
+            return f"{hours}h {mins}m"
+
+    def get_logs(self, n: int = 50) -> List[str]:
+        return list(self.log_buffer)[-n:]
+
+    def to_dict(self) -> dict:
+        return {
+            'config_file': self.config_file,
+            'bot_type': self.bot_type,
+            'pid': self._pid,
+            'is_running': self.is_running,
+            'started_at': self.started_at.isoformat(),
+            'uptime': self.uptime_str,
+            'uptime_seconds': self.uptime_seconds,
+            'external': True
+        }
+
+
 class BotManager:
     """
     Manages trading bot processes
@@ -121,12 +281,16 @@ class BotManager:
     def __init__(self, bots_dir: str, config_dir: str):
         self.bots_dir = bots_dir
         self.config_dir = config_dir
+        self.logs_dir = os.path.join(os.path.dirname(bots_dir), 'logs')
         self.processes: Dict[str, BotProcess] = {}
         self._lock = threading.Lock()
         self._log_callback = None  # Global callback for all bot logs
         self._status_callback = None  # Callback for status changes
 
-        # Start cleanup thread to remove dead processes
+        # Discover bots started externally (via start.sh)
+        self._discover_external_bots()
+
+        # Start cleanup thread to remove dead processes and discover new external bots
         self._cleanup_thread = threading.Thread(target=self._cleanup_loop, daemon=True)
         self._cleanup_thread.start()
 
@@ -155,18 +319,62 @@ class BotManager:
             callback_thread.start()
             print(f"[BotManager] Status callback thread started", flush=True)
 
+    def _discover_external_bots(self):
+        """Scan logs/*.pid files to find bots started externally (via start.sh)."""
+        if not os.path.exists(self.logs_dir):
+            return
+
+        try:
+            for filename in os.listdir(self.logs_dir):
+                if not filename.endswith('.pid'):
+                    continue
+
+                pid_file = os.path.join(self.logs_dir, filename)
+                config_name = filename.replace('.pid', '.json')
+                log_file = os.path.join(self.logs_dir, filename.replace('.pid', '.log'))
+
+                # Skip if we already track this config
+                if config_name in self.processes and self.processes[config_name].is_running:
+                    continue
+
+                try:
+                    with open(pid_file, 'r') as f:
+                        pid = int(f.read().strip())
+                except (ValueError, OSError):
+                    continue
+
+                # Check if process is alive
+                try:
+                    os.kill(pid, 0)
+                except (OSError, ProcessLookupError):
+                    continue  # Dead PID, skip
+
+                # Detect bot type from config
+                config_path = os.path.join(self.config_dir, config_name)
+                bot_type = 'perp'  # default
+                if os.path.exists(config_path):
+                    bot_type = self._detect_bot_type(config_path) or 'perp'
+
+                ext_proc = ExternalBotProcess(config_name, pid, bot_type, log_file, pid_file)
+                ext_proc.start_log_capture()
+                self.processes[config_name] = ext_proc
+                print(f"[BotManager] Discovered external bot: {config_name} (PID {pid})")
+
+        except Exception as e:
+            print(f"[BotManager] Error discovering external bots: {e}")
+
     def _cleanup_loop(self):
-        """Background thread to clean up dead processes"""
+        """Background thread to clean up dead processes and discover new external bots"""
         while True:
-            time.sleep(5)
+            time.sleep(10)
+            # Discover any newly-started external bots
+            with self._lock:
+                self._discover_external_bots()
+            # Clean up dead processes
             with self._lock:
                 dead = [k for k, v in self.processes.items() if not v.is_running]
-                # Keep dead processes for a bit so UI can show they stopped
-                # Only remove after 60 seconds
                 for config_file in dead:
-                    proc = self.processes[config_file]
-                    if proc.uptime_seconds < 0:  # Process died, uptime goes negative conceptually
-                        pass  # Keep it for status display
+                    pass  # Keep for status display
 
     def _detect_bot_type(self, config_path: str) -> Optional[str]:
         """Detect bot type from config file contents"""
@@ -281,18 +489,11 @@ class BotManager:
 
     def stop_bot(self, config_file: str, force: bool = False) -> dict:
         """
-        Stop a running bot
+        Stop a running bot (works for both dashboard-started and terminal-started bots)
 
         Uses a two-phase approach:
         1. SIGTERM for graceful shutdown (3 second window)
         2. SIGKILL if still alive (force kill)
-
-        Args:
-            config_file: Name of config file
-            force: If True, skip SIGTERM and go straight to SIGKILL
-
-        Returns:
-            dict with success status and message
         """
         with self._lock:
             if config_file not in self.processes:
@@ -301,57 +502,55 @@ class BotManager:
             bot_proc = self.processes[config_file]
 
             if not bot_proc.is_running:
-                # Clean up dead process
                 del self.processes[config_file]
+                self._cleanup_pid_file(config_file)
                 return {'success': True, 'message': 'Bot was already stopped'}
 
             pid = bot_proc.pid
+            is_external = isinstance(bot_proc, ExternalBotProcess)
             killed_forcefully = False
 
             try:
-                # Stop log capture first so the reader thread releases stdout
                 bot_proc.stop_log_capture()
 
-                if force:
-                    # Go straight to SIGKILL
-                    bot_proc.process.kill()
-                else:
-                    # Phase 1: Try graceful SIGTERM
-                    bot_proc.process.terminate()
-                    try:
-                        bot_proc.process.wait(timeout=3)
-                    except subprocess.TimeoutExpired:
-                        # Phase 2: Process didn't exit gracefully, force kill
-                        print(f"[BotManager] SIGTERM didn't stop PID {pid} within 3s, sending SIGKILL", flush=True)
-                        bot_proc.process.kill()
+                if is_external:
+                    # External bot: use os.kill directly
+                    if force:
+                        os.kill(pid, signal.SIGKILL)
                         killed_forcefully = True
+                    else:
+                        os.kill(pid, signal.SIGTERM)
+                        time.sleep(3)
+                        if bot_proc.is_running:
+                            os.kill(pid, signal.SIGKILL)
+                            killed_forcefully = True
+                else:
+                    # Dashboard-started bot: use subprocess methods
+                    if force:
+                        bot_proc.process.kill()
+                    else:
+                        bot_proc.process.terminate()
+                        try:
+                            bot_proc.process.wait(timeout=3)
+                        except subprocess.TimeoutExpired:
+                            print(f"[BotManager] SIGTERM didn't stop PID {pid} within 3s, sending SIGKILL", flush=True)
+                            bot_proc.process.kill()
+                            killed_forcefully = True
 
-                # Wait for process to actually die after kill/terminate
-                try:
-                    bot_proc.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    # Last resort: use os.kill directly
-                    print(f"[BotManager] Process wait timed out for PID {pid}, trying os.kill", flush=True)
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                        time.sleep(0.5)
-                    except OSError:
-                        pass  # Process may already be dead
+                        bot_proc.process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                            time.sleep(0.5)
+                        except OSError:
+                            pass
 
-                # Final check: is it actually dead?
-                if bot_proc.process.poll() is None:
-                    # Still alive somehow - try one more os.kill
-                    try:
-                        os.kill(pid, signal.SIGKILL)
-                        time.sleep(0.2)
-                    except OSError:
-                        pass
+                # Wait briefly then verify
+                time.sleep(0.5)
 
-                # Clean up regardless - if it's still alive at this point,
-                # it's a zombie and we should still remove our tracking
                 del self.processes[config_file]
-
-                # Notify status change
+                self._cleanup_pid_file(config_file)
                 self._notify_status_change(config_file, 'stopped')
 
                 method = "SIGKILL (forced)" if (force or killed_forcefully) else "SIGTERM (graceful)"
@@ -361,23 +560,30 @@ class BotManager:
                 }
 
             except Exception as e:
-                # Even if we got an error, try to clean up
                 print(f"[BotManager] Error stopping bot {config_file}: {e}", flush=True)
                 try:
                     os.kill(pid, signal.SIGKILL)
                 except OSError:
-                    pass  # Process may already be dead
+                    pass
 
-                # Remove from tracking regardless
                 if config_file in self.processes:
                     del self.processes[config_file]
-
+                self._cleanup_pid_file(config_file)
                 self._notify_status_change(config_file, 'stopped')
 
                 return {
                     'success': True,
                     'message': f'Stopped bot for {config_file} (PID {pid}) - cleanup after error: {str(e)}'
                 }
+
+    def _cleanup_pid_file(self, config_file: str):
+        """Remove the PID file for a stopped bot."""
+        try:
+            pid_file = os.path.join(self.logs_dir, config_file.replace('.json', '.pid'))
+            if os.path.exists(pid_file):
+                os.remove(pid_file)
+        except Exception:
+            pass
 
     def get_status(self, config_file: str) -> dict:
         """Get status of a specific bot"""
@@ -417,6 +623,22 @@ class BotManager:
                 'success': True,
                 'logs': self.processes[config_file].get_logs(n)
             }
+
+    def subscribe_bot_logs(self, config_file: str):
+        """Subscribe to real-time logs for a bot. Returns (queue, history) or (None, None)."""
+        with self._lock:
+            if config_file not in self.processes:
+                return None, None
+            bot = self.processes[config_file]
+            q = bot.subscribe_logs()
+            history = bot.get_logs(100)
+            return q, history
+
+    def unsubscribe_bot_logs(self, config_file: str, q):
+        """Unsubscribe from a bot's log stream."""
+        with self._lock:
+            if config_file in self.processes:
+                self.processes[config_file].unsubscribe_logs(q)
 
     def stop_all(self) -> dict:
         """Stop all running bots"""

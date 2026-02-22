@@ -33,6 +33,11 @@ source venv/bin/activate && python scripts/trade.py long HYPE 50 --leverage 3
 
 # With subaccount
 source venv/bin/activate && python scripts/trade.py long HYPE 50 --subaccount 0xAddress
+
+# HIP-3 builder markets (use dex:COIN format)
+source venv/bin/activate && python scripts/trade.py long xyz:GOLD 50
+source venv/bin/activate && python scripts/trade.py short flx:XMR 100
+source venv/bin/activate && python scripts/trade.py close xyz:GOLD
 ```
 
 **If you see "Builder fee has not been approved"**, run:
@@ -88,38 +93,33 @@ If `.env` doesn't exist or the venv isn't set up, walk through these steps:
    source venv/bin/activate && python scripts/trade.py long HYPE 1
    ```
 
-## Bot Configuration
+## Bot Setup (one command)
 
-When the user wants to run an automated bot:
+Use `create_config.py` to generate a config with correct market decimals, then start the bot. Parse the user's request and run the matching command:
 
-1. Copy an example config:
-   ```bash
-   cp config/examples/perp_example.json config/my_bot.json
-   ```
-   Use `grid_example.json` for grid trading, `spot_example.json` for spot market making.
+| User says | You run |
+|-----------|---------|
+| `set up a market maker for UNI` | `source venv/bin/activate && python scripts/create_config.py mm UNI` |
+| `mm for HYPE with 50 bps spread` | `source venv/bin/activate && python scripts/create_config.py mm HYPE --spread 50` |
+| `mm for UNI 80 bps, $25 orders, 5x` | `source venv/bin/activate && python scripts/create_config.py mm UNI --spread 80 --size 25 --leverage 5` |
+| `grid bot for xyz:SILVER` | `source venv/bin/activate && python scripts/create_config.py grid xyz:SILVER` |
+| `grid for HYPE with long bias` | `source venv/bin/activate && python scripts/create_config.py grid HYPE --bias long` |
 
-2. Get market decimals:
-   ```bash
-   source venv/bin/activate && python scripts/check_market.py HYPE
-   ```
+The script auto-fetches market decimals, creates the config, and prints the `./start.sh` command to run. After the user confirms, start the bot:
 
-3. Edit `config/my_bot.json` with the output values:
-   - `market`: Asset name (e.g., "HYPE")
-   - `exchange.price_decimals`: From check_market
-   - `exchange.size_decimals`: From check_market
-   - `trading.base_order_size`: Start with 10-20 USD
-   - `position.max_position_usd`: Start with 50-100 USD
-   - `position.leverage`: 3x is safe default
+```bash
+./start.sh config/<market>_mm.json    # or <market>_grid.json
+```
 
-   For subaccounts, add:
-   ```json
-   "account": {
-       "subaccount_address": "0xAddress",
-       "is_subaccount": true
-   }
-   ```
+**create_config.py options:** `--spread <bps>`, `--size <usd>`, `--max-pos <usd>`, `--leverage <n>`, `--bias long/short/neutral` (grid only), `--levels <n>` (grid only), `--spacing <pct>` (grid only), `-o <path>` (custom output path)
 
-4. Start: `./start.sh config/my_bot.json`
+For subaccounts, edit the generated config and add:
+```json
+"account": {
+    "subaccount_address": "0xAddress",
+    "is_subaccount": true
+}
+```
 
 ## Dashboard
 
@@ -130,10 +130,34 @@ Opens on http://localhost:5050. Optionally add `ANTHROPIC_API_KEY` to `.env` for
 
 ## Market Types
 
-- **Standard Perps**: `"ETH"`, `"BTC"`, `"HYPE"`, `"ICP"`
-- **HIP-3 Builder Perps**: `"xyz:COPPER"`, `"flx:XMR"` (set `dex` in config)
-- **HIP-1 Builder Spot**: `"@260"` format (needs `perp_coin` oracle)
-- **Canonical Spot**: `"PURR/USDC"`
+- **Standard Perps**: `"ETH"`, `"BTC"`, `"HYPE"`, `"ICP"` — set `"dex": ""`
+- **HIP-3 Builder Perps**: `"xyz:GOLD"`, `"flx:XMR"` — set `"dex": "xyz"` or `"flx"`
+- **HIP-1 Builder Spot**: `"@260"` format — set `perp_coin` for price oracle
+- **Canonical Spot**: `"PURR/USDC"` — pair format
+
+### HIP-3 Builder Perps (xyz, flx markets)
+
+HIP-3 markets are builder-deployed perpetuals on Hyperliquid. They have less competition and are good for grid trading or airdrop farming.
+
+**Quick trade:** `python scripts/trade.py long xyz:GOLD 50`
+
+**Bot config:** Copy `config/examples/grid_example.json` and set:
+```json
+{
+  "market": "xyz:GOLD",
+  "dex": "xyz"
+}
+```
+
+**Check decimals:** `python scripts/check_market.py xyz:GOLD`
+
+**Known dex prefixes:** `xyz`, `flx` (new ones may appear as builders deploy markets)
+
+**Key differences from standard perps:**
+- Market name uses `dex:COIN` format (e.g., `xyz:GOLD` not just `GOLD`)
+- Config must include `"dex": "xyz"` (or `"flx"`) — empty string for standard perps
+- Bots auto-detect HIP-3 from the `dex` field and configure the SDK accordingly
+- Lower volume than standard perps — use wider spreads and smaller order sizes
 
 ## Troubleshooting
 
@@ -143,6 +167,8 @@ Opens on http://localhost:5050. Optionally add `ANTHROPIC_API_KEY` to `.env` for
 - **"Rate limited"**: Enable `smart_order_mgmt_enabled: true`, increase `update_threshold_bps`
 - **422 errors with fromhex()**: Wallet addresses must be full 42 chars (0x + 40)
 - **Orders not showing**: Check `subaccount_address` and `is_subaccount: true`
+- **HIP-3 market not found**: Use `dex:COIN` format (e.g., `xyz:GOLD` not `GOLD`) and ensure `"dex"` is set in config
+- **HIP-3 orders failing**: Make sure both `"market"` and `"dex"` fields are set correctly in config
 
 ## Emergency Stop
 

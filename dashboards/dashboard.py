@@ -14,24 +14,7 @@ import sys
 import json
 import sqlite3
 
-# Monkey-patch for eventlet BEFORE other imports
-try:
-    import eventlet
-    eventlet.monkey_patch()
-    EVENTLET_AVAILABLE = True
-except ImportError:
-    EVENTLET_AVAILABLE = False
-
 from flask import Flask, render_template_string, jsonify, redirect, request
-
-# Try to import Flask-SocketIO for real-time features
-try:
-    from flask_socketio import SocketIO, emit
-    SOCKETIO_AVAILABLE = True
-except ImportError:
-    SOCKETIO_AVAILABLE = False
-    print("Warning: flask-socketio not installed. Real-time features disabled.")
-    print("Run: pip install flask-socketio eventlet")
 
 # Add lib directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
@@ -41,19 +24,13 @@ from dashboard_blueprint import create_dashboard_blueprint
 from dashboard_perp_blueprint import create_perp_dashboard_blueprint
 from config_editor_blueprint import create_config_editor_blueprint
 from ai_assistant_blueprint import ai_bp
+from setup_blueprint import setup_bp
 from bot_manager import get_bot_manager
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'perplobster-secret-key'
 
-# Initialize SocketIO if available
-if SOCKETIO_AVAILABLE:
-    # Use eventlet for proper WebSocket support, fall back to threading
-    async_mode = 'eventlet' if EVENTLET_AVAILABLE else 'threading'
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode)
-    print(f"SocketIO initialized with async_mode={async_mode}")
-else:
-    socketio = None
+socketio = None  # Log streaming now uses SSE (no WebSocket/SocketIO needed)
 
 # Paths relative to project root
 VIBETRADERS_ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -67,9 +44,57 @@ MAIN_CONFIG_PATH = os.path.join(VIBETRADERS_ROOT, 'config.json')
 from credentials import get_credentials
 main_account = get_credentials().get('account_address') or 'Not configured'
 
-# Discover all trading pairs
+# Discover all trading pairs (initial scan)
 discovery = ConfigDiscovery(config_dir=CONFIG_DIR)
 ALL_PAIRS = discovery.get_all_pairs()
+
+# Track which pair routes have been registered as blueprints
+_registered_routes = set()
+
+def get_current_pairs():
+    """Re-scan config directory for current trading pairs (called on each page load)"""
+    return discovery.get_all_pairs()
+
+def _register_pair_blueprint(pair_info):
+    """Register a Flask blueprint for a trading pair if not already done"""
+    route = pair_info['route']
+    if route in _registered_routes:
+        return
+    try:
+        if pair_info['type'] == 'spot':
+            bp = create_dashboard_blueprint(
+                pair_name=pair_info['pair'],
+                route_prefix=pair_info['route'],
+                database_path=DATABASE_PATH
+            )
+            app.register_blueprint(bp)
+        elif pair_info['type'] == 'perp':
+            original_market = pair_info.get('market_name', pair_info['base_token'])
+            config_filepath = pair_info.get('config_file', '')
+            config_filename = os.path.basename(config_filepath) if config_filepath else None
+            bp = create_perp_dashboard_blueprint(
+                market_name=original_market,
+                route_prefix=pair_info['route'],
+                database_path=DATABASE_PATH,
+                config_file=config_filename
+            )
+            app.register_blueprint(bp)
+        elif pair_info['type'] == 'grid':
+            raw_market_name = pair_info.get('market_name', pair_info['base_token'])
+            config_filepath = pair_info.get('config_file', '')
+            config_filename = os.path.basename(config_filepath) if config_filepath else None
+            bp = create_perp_dashboard_blueprint(
+                market_name=raw_market_name,
+                route_prefix=pair_info['route'],
+                database_path=DATABASE_PATH,
+                config_file=config_filename,
+                is_grid=True
+            )
+            app.register_blueprint(bp)
+        _registered_routes.add(route)
+        print(f"  [Dynamic] Registered {pair_info['type'].upper()} dashboard: /{route}")
+    except Exception as e:
+        print(f"  [Dynamic] Could not register {pair_info['pair']}: {e}")
 
 print(f"")
 print(f"=" * 80)
@@ -108,48 +133,13 @@ print(f"  Registered CONFIG EDITOR: /config")
 app.register_blueprint(ai_bp)
 print(f"  Registered AI ASSISTANT: /ai")
 
-# Register blueprints for each discovered pair
+# Register setup wizard blueprint
+app.register_blueprint(setup_bp)
+print(f"  Registered SETUP WIZARD: /setup")
+
+# Register blueprints for each discovered pair at startup
 for pair_info in ALL_PAIRS:
-    try:
-        if pair_info['type'] == 'spot':
-            bp = create_dashboard_blueprint(
-                pair_name=pair_info['pair'],
-                route_prefix=pair_info['route'],
-                database_path=DATABASE_PATH
-            )
-            app.register_blueprint(bp)
-            print(f"  Registered SPOT dashboard: /{pair_info['route']}")
-        elif pair_info['type'] == 'perp':
-            # Pass base market name (e.g., "BTC") - blueprint handles "-PERP" suffix
-            original_market = pair_info.get('market_name', pair_info['base_token'])
-            # Extract just the filename for bot control
-            config_filepath = pair_info.get('config_file', '')
-            config_filename = os.path.basename(config_filepath) if config_filepath else None
-            bp = create_perp_dashboard_blueprint(
-                market_name=original_market,
-                route_prefix=pair_info['route'],
-                database_path=DATABASE_PATH,
-                config_file=config_filename
-            )
-            app.register_blueprint(bp)
-            print(f"  Registered PERP dashboard: /{pair_info['route']} (config: {config_filename})")
-        elif pair_info['type'] == 'grid':
-            # Grid bots store fills with raw market name (e.g., "xyz:GOLD")
-            # Pass the raw market name so the blueprint queries correctly
-            raw_market_name = pair_info.get('market_name', pair_info['base_token'])
-            config_filepath = pair_info.get('config_file', '')
-            config_filename = os.path.basename(config_filepath) if config_filepath else None
-            bp = create_perp_dashboard_blueprint(
-                market_name=raw_market_name,
-                route_prefix=pair_info['route'],
-                database_path=DATABASE_PATH,
-                config_file=config_filename,
-                is_grid=True  # Tell blueprint to use raw market name for DB queries
-            )
-            app.register_blueprint(bp)
-            print(f"  Registered GRID dashboard: /{pair_info['route']} (market: {raw_market_name}, config: {config_filename})")
-    except Exception as e:
-        print(f"  WARNING: Could not register {pair_info['pair']}: {e}")
+    _register_pair_blueprint(pair_info)
 
 
 # ============================================================================
@@ -231,21 +221,184 @@ fetch('/ai/chat-panel')
 </script>
 '''
 
+# Wallet connect button (injected into all HTML pages via after_request)
+WALLET_BAR = '''
+<!-- Wallet Connect Button -->
+<style>
+#vt-wallet-btn {
+    position: fixed;
+    top: 12px;
+    right: 16px;
+    z-index: 9999;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+#vt-wallet-btn button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-radius: 12px;
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: rgba(10, 14, 39, 0.92);
+    backdrop-filter: blur(12px);
+    color: #e0e0e0;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    font-family: inherit;
+}
+#vt-wallet-btn button:hover {
+    background: rgba(20, 28, 58, 0.95);
+    border-color: rgba(0, 255, 255, 0.4);
+}
+#vt-wallet-btn button.not-connected {
+    background: linear-gradient(135deg, #00b8b8, #00d4d4);
+    border: none;
+    color: #fff;
+    padding: 10px 22px;
+    font-size: 15px;
+}
+#vt-wallet-btn button.not-connected:hover {
+    background: linear-gradient(135deg, #00cccc, #00e8e8);
+    box-shadow: 0 4px 20px rgba(0, 255, 255, 0.25);
+}
+#vt-wallet-btn .wallet-dot {
+    width: 8px;
+    height: 8px;
+    background: #4ade80;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+#vt-wallet-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    min-width: 180px;
+    background: rgba(12, 16, 42, 0.98);
+    border: 1px solid rgba(0, 255, 255, 0.15);
+    border-radius: 12px;
+    backdrop-filter: blur(12px);
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+#vt-wallet-dropdown.show { display: block; }
+#vt-wallet-dropdown a {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    color: #ccc;
+    text-decoration: none;
+    font-size: 14px;
+    transition: background 0.1s;
+}
+#vt-wallet-dropdown a:hover {
+    background: rgba(0, 255, 255, 0.06);
+    color: #fff;
+}
+#vt-wallet-dropdown .divider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    margin: 0;
+}
+</style>
+<div id="vt-wallet-btn">
+    <button onclick="vtWalletToggle()" id="vt-wallet-main-btn">
+        <span style="color: #555;">&#8943;</span>
+    </button>
+    <div id="vt-wallet-dropdown">
+        <a href="/setup" id="vt-dd-settings">&#9881; Wallet Settings</a>
+        <div class="divider"></div>
+        <a href="#" id="vt-dd-disconnect" onclick="vtWalletDisconnect(event)" style="color:#f87171;">&#x2715; Disconnect</a>
+    </div>
+</div>
+<script>
+(function() {
+    var btn = document.getElementById('vt-wallet-main-btn');
+    var dropdown = document.getElementById('vt-wallet-dropdown');
+    var ddDisconnect = document.getElementById('vt-dd-disconnect');
+    var isConnected = false;
+
+    function abbrev(addr) {
+        if (!addr || addr.length < 10) return addr || '';
+        return addr.slice(0, 6) + '...' + addr.slice(-4);
+    }
+
+    fetch('/setup/api/check-credentials')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.has_credentials && data.account_address) {
+                isConnected = true;
+                btn.className = '';
+                btn.innerHTML = '<span class="wallet-dot"></span>' + abbrev(data.account_address);
+            } else {
+                isConnected = false;
+                btn.className = 'not-connected';
+                btn.innerHTML = 'Connect Wallet';
+                btn.onclick = function() { window.location.href = '/setup'; };
+            }
+        })
+        .catch(function() {
+            btn.className = 'not-connected';
+            btn.innerHTML = 'Connect Wallet';
+            btn.onclick = function() { window.location.href = '/setup'; };
+        });
+
+    document.addEventListener('click', function(e) {
+        if (!document.getElementById('vt-wallet-btn').contains(e.target)) {
+            dropdown.classList.remove('show');
+        }
+    });
+
+    window.vtWalletToggle = function() {
+        if (!isConnected) { window.location.href = '/setup'; return; }
+        dropdown.classList.toggle('show');
+    };
+
+    window.vtWalletDisconnect = function(e) {
+        e.preventDefault();
+        dropdown.classList.remove('show');
+        if (confirm('Disconnect wallet? This will clear your credentials from .env.')) {
+            fetch('/setup/api/save-credentials', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({account_address: '', secret_key: ''})
+            }).then(function() {
+                btn.className = 'not-connected';
+                btn.innerHTML = 'Connect Wallet';
+                btn.onclick = function() { window.location.href = '/setup'; };
+                isConnected = false;
+            }).catch(function() {
+                alert('Failed to disconnect. Check console.');
+            });
+        }
+    };
+})();
+</script>
+'''
+
 # Pages that should NOT get the common footer injected
-_NO_FOOTER_PATHS = {'/ai/chat-panel', '/emergency'}
+_NO_FOOTER_PATHS = {'/ai/chat-panel', '/emergency', '/setup', '/setup/'}
 
 
 @app.after_request
-def inject_common_footer(response):
-    """Inject the shared footer (emergency stop + AI chat) into all HTML pages"""
+def inject_common_elements(response):
+    """Inject the wallet bar (top) and footer (bottom) into all HTML pages"""
     if (response.content_type
             and 'text/html' in response.content_type
             and request.path not in _NO_FOOTER_PATHS
             and not request.path.startswith('/api/')):
         html = response.get_data(as_text=True)
+        # Inject wallet bar after <body>
+        if '<body>' in html and 'id="vt-wallet-bar"' not in html:
+            html = html.replace('<body>', '<body>' + WALLET_BAR)
+        # Inject footer before </body>
         if '</body>' in html and 'id="vt-footer"' not in html:
             html = html.replace('</body>', COMMON_FOOTER + '</body>')
-            response.set_data(html)
+        response.set_data(html)
     return response
 
 
@@ -829,10 +982,8 @@ def api_discover_subaccounts():
 def api_accounts_balances():
     """Fetch live perps + spot equity for all accounts using HL portfolio endpoint"""
     try:
-        from hyperliquid.info import Info
-        from hyperliquid.utils import constants
+        from cached_info import get_portfolio
 
-        info = Info(constants.MAINNET_API_URL, skip_ws=True)
         all_addrs = get_all_addresses()
         results = []
 
@@ -844,8 +995,8 @@ def api_accounts_balances():
 
             try:
                 # Portfolio endpoint returns both total and perp-only equity
-                # (same values the Hyperliquid UI displays)
-                portfolio = info.post('/info', {'type': 'portfolio', 'user': addr})
+                # (cached 2 min — expensive call)
+                portfolio = get_portfolio(addr)
                 total_equity = 0.0
                 for period_data in portfolio:
                     period = period_data[0]
@@ -1295,16 +1446,30 @@ ACCOUNTS_PAGE_TEMPLATE = '''
 
 @app.route('/')
 def index():
-    """Landing page with all pairs overview"""
-    return render_template_string(LANDING_PAGE_TEMPLATE, pairs=ALL_PAIRS)
+    """Landing page with all pairs overview.
+    Redirects to /setup if credentials are not configured.
+    """
+    from credentials import needs_setup
+    if needs_setup():
+        return redirect('/setup')
+    # Re-scan configs on each load so new pairs appear without restart
+    current_pairs = get_current_pairs()
+    # Auto-register blueprints for any new pairs
+    for pair_info in current_pairs:
+        _register_pair_blueprint(pair_info)
+    return render_template_string(LANDING_PAGE_TEMPLATE, pairs=current_pairs)
 
 
 @app.route('/api/overview')
 def api_overview():
     """Get overview stats for all pairs"""
     overview = []
+    current_pairs = get_current_pairs()
+    # Auto-register blueprints for any new pairs
+    for pair_info in current_pairs:
+        _register_pair_blueprint(pair_info)
 
-    for pair_info in ALL_PAIRS:
+    for pair_info in current_pairs:
         # Database stores "BTC-PERP" format for perps
         if pair_info['type'] == 'perp':
             db_name = f"{pair_info.get('market_name', pair_info['base_token'])}-PERP"
@@ -1708,78 +1873,10 @@ LANDING_PAGE_TEMPLATE = '''
 
 
 # ============================================================================
-# WEBSOCKET EVENT HANDLERS
+# NOTE: Log streaming uses SSE (Server-Sent Events) via the config editor
+# blueprint's /config/api/bot/logs/<filename>/stream endpoint.
+# No WebSocket/SocketIO required — more reliable, no eventlet dependency.
 # ============================================================================
-
-if SOCKETIO_AVAILABLE:
-    # Set up bot manager with log streaming callback
-    try:
-        bot_manager = get_bot_manager(bots_dir=BOTS_DIR, config_dir=CONFIG_DIR)
-
-        def on_log_line(config_file, log_line):
-            """Called when a bot produces a log line - stream to connected clients"""
-            socketio.emit('bot_log', {
-                'config_file': config_file,
-                'line': log_line
-            })
-
-        def on_status_change(config_file, status, full_status):
-            """Called when bot status changes - use background task to avoid blocking"""
-            print(f"[Dashboard] on_status_change called: {config_file} -> {status}", flush=True)
-            try:
-                # Use start_background_task to avoid blocking in non-eventlet threads
-                def emit_status():
-                    socketio.emit('bot_status', {
-                        'config_file': config_file,
-                        'status': status,
-                        'data': full_status
-                    })
-                    print(f"[Dashboard] socketio.emit completed", flush=True)
-                socketio.start_background_task(emit_status)
-            except Exception as e:
-                print(f"[Dashboard] socketio.emit error: {e}", flush=True)
-
-        bot_manager.set_log_callback(on_log_line)
-        bot_manager.set_status_callback(on_status_change)
-        print(f"[Dashboard] Set callbacks on bot_manager instance: {id(bot_manager)}")
-
-    except Exception as e:
-        print(f"Warning: Could not initialize bot manager for WebSocket: {e}")
-
-    @socketio.on('connect')
-    def handle_connect():
-        print('[WebSocket] Client connected')
-        emit('connected', {'status': 'ok'})
-
-    @socketio.on('disconnect')
-    def handle_disconnect():
-        print('[WebSocket] Client disconnected')
-
-    @socketio.on('subscribe_logs')
-    def handle_subscribe_logs(data):
-        """Client wants to subscribe to logs for a specific bot"""
-        config_file = data.get('config_file')
-        print(f'[WebSocket] Client subscribed to logs for {config_file}')
-        # Send recent log history
-        try:
-            bot_manager = get_bot_manager()
-            logs = bot_manager.get_logs(config_file, n=100)
-            emit('log_history', {
-                'config_file': config_file,
-                'logs': logs.get('logs', [])
-            })
-        except Exception as e:
-            emit('error', {'message': str(e)})
-
-    @socketio.on('get_all_status')
-    def handle_get_all_status():
-        """Client requests current status of all bots"""
-        try:
-            bot_manager = get_bot_manager()
-            statuses = bot_manager.get_all_status()
-            emit('all_status', {'bots': statuses})
-        except Exception as e:
-            emit('error', {'message': str(e)})
 
 
 # ============================================================================
@@ -1787,11 +1884,5 @@ if SOCKETIO_AVAILABLE:
 # ============================================================================
 
 if __name__ == '__main__':
-    if SOCKETIO_AVAILABLE:
-        print("Starting with WebSocket support (real-time logs enabled)")
-        # Note: debug=True with use_reloader=False for eventlet compatibility
-        # The reloader doesn't work well with eventlet monkey patching
-        socketio.run(app, host='0.0.0.0', port=5050, debug=True, use_reloader=False, log_output=True)
-    else:
-        print("Starting without WebSocket support (install flask-socketio for real-time logs)")
-        app.run(host='0.0.0.0', port=5050, debug=True)
+    print("Starting Perp Lobster Dashboard (SSE log streaming enabled)")
+    app.run(host='0.0.0.0', port=5050, debug=True, threaded=True)

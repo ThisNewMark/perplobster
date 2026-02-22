@@ -196,17 +196,18 @@ def get_market_info():
         return cached_market_info
 
     try:
-        # For HIP-3 markets, need to include perp_dexs in the API call
-        if IS_HIP3_MARKET:
-            result = info.post("/info", {"type": "metaAndAssetCtxs", "perp_dexs": ["", "xyz", "flx"]})
-            meta = result[0] if isinstance(result, list) else result
-        else:
-            meta = info.meta()
-
+        # meta_and_asset_ctxs() only returns standard dex, so use meta(dex=) for HIP-3
+        meta = info.meta(dex=DEX)
         universe = meta.get('universe', [])
 
-        # Find our market in the universe
-        market_info = next((m for m in universe if m['name'] == MARKET_NAME), None)
+        # Find our market — SDK may return bare "SILVER" or prefixed "xyz:SILVER"
+        coin = MARKET_NAME.split(':')[-1] if ':' in MARKET_NAME else MARKET_NAME
+        market_info = None
+        for m in universe:
+            m_bare = m['name'].split(':')[-1] if ':' in m['name'] else m['name']
+            if m_bare == coin or m['name'] == MARKET_NAME:
+                market_info = m
+                break
 
         if not market_info:
             # Don't warn every time, just return None - the bot still works without this metadata
@@ -338,14 +339,27 @@ def get_position():
         }
 
 def get_account_value():
-    """Get account value and margin info"""
+    """Get account value and margin info.
+    Handles both standard and unified account modes. When unified mode is active,
+    clearinghouseState returns $0 — we fall back to the portfolio() endpoint."""
     try:
-        user_state = info.user_state(account_address, dex=DEX) if IS_HIP3_MARKET else info.user_state(account_address)
-        margin_summary = user_state.get('marginSummary', {})
+        user_state = info.user_state(account_address)
+        margin_summary = user_state.get('crossMarginSummary') or user_state.get('marginSummary', {})
 
         account_value = float(margin_summary.get('accountValue', 0.0))
         total_margin_used = float(margin_summary.get('totalMarginUsed', 0.0))
-        total_ntl_pos = float(margin_summary.get('totalNtlPos', 0.0))  # Total notional position
+        total_ntl_pos = float(margin_summary.get('totalNtlPos', 0.0))
+
+        # Unified account mode returns $0 for clearinghouse — use portfolio() as fallback
+        if account_value == 0.0:
+            try:
+                portfolio = info.portfolio(account_address)
+                if portfolio and len(portfolio) > 0:
+                    history = portfolio[0][1].get('accountValueHistory', [])
+                    if history:
+                        account_value = float(history[-1][1])
+            except Exception:
+                pass
 
         # Calculate margin ratio (account_value / margin_used)
         margin_ratio_pct = (account_value / total_margin_used * 100) if total_margin_used > 0 else 0
@@ -414,6 +428,7 @@ def place_quote(is_buy, price, size_contracts):
 
         # Enforce minimum size
         if size_contracts < MIN_ORDER_SIZE:
+            print(f"   ⚠️  Order too small: {size_contracts} < min {MIN_ORDER_SIZE} contracts (${size_contracts * price:.2f})")
             return False, None
 
         # Use post-only orders to ensure maker rebates (ALO = Add Liquidity Only)
@@ -1153,17 +1168,27 @@ def get_bot_state_for_metrics():
 # ============================================================
 
 def set_leverage():
-    """Set leverage for this market"""
+    """Set leverage for this market. Tries isolated margin first (works on all assets),
+    falls back to cross margin if isolated fails."""
     try:
         print(f"⚙️  Setting leverage to {LEVERAGE}x for {MARKET_NAME}...")
 
-        # Set leverage using the exchange API
+        # Try isolated margin first — works on all assets including HIP-3
+        result = exchange.update_leverage(LEVERAGE, MARKET_NAME, is_cross=False)
+
+        if result.get('status') == 'ok':
+            print(f"   ✅ Leverage set to {LEVERAGE}x (isolated margin)")
+            return
+
+        # If isolated fails, try cross margin
+        print(f"   ℹ️  Isolated margin failed, trying cross margin...")
         result = exchange.update_leverage(LEVERAGE, MARKET_NAME, is_cross=True)
 
         if result.get('status') == 'ok':
             print(f"   ✅ Leverage set to {LEVERAGE}x (cross margin)")
         else:
             print(f"   ⚠️  Leverage update response: {result}")
+            print(f"   ℹ️  Continuing anyway - set leverage manually in Hyperliquid UI")
 
     except Exception as e:
         print(f"   ⚠️  Error setting leverage: {e}")

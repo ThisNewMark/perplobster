@@ -24,8 +24,13 @@ If Perp Lobster is already set up (`perplobster/` directory exists with `.env` c
 | `short 50 ETH at 1900` | `cd perplobster && source venv/bin/activate && python scripts/trade.py short ETH 50 --price 1900` |
 | `close HYPE` | `cd perplobster && source venv/bin/activate && python scripts/trade.py close HYPE` |
 | `long 50 HYPE 3x` | `cd perplobster && source venv/bin/activate && python scripts/trade.py long HYPE 50 --leverage 3` |
+| `long 50 GOLD on xyz` | `cd perplobster && source venv/bin/activate && python scripts/trade.py long xyz:GOLD 50` |
+| `short 100 XMR on flx` | `cd perplobster && source venv/bin/activate && python scripts/trade.py short flx:XMR 100` |
+| `close GOLD on xyz` | `cd perplobster && source venv/bin/activate && python scripts/trade.py close xyz:GOLD` |
 
 **Trade options:** Amount is in USD. Add `--leverage N` for leverage. Add `--price X` for limit orders. Add `--subaccount 0x...` for subaccount trading.
+
+**HIP-3 builder markets:** When a user mentions a market "on xyz" or "on flx", use the `dex:COIN` format (e.g., `xyz:GOLD`, `flx:XMR`). These are builder-deployed perpetuals with lower volume — good for grid trading and farming.
 
 If you see a "Builder fee has not been approved" error, run:
 ```bash
@@ -60,6 +65,7 @@ TRADING (quick, one-time orders):
   long <amount> <market> at <price>   Limit long (e.g., long 50 HYPE at 28.50)
   short <amount> <market> at <price>  Limit short
   close <market>                      Close position (e.g., close HYPE)
+  long 50 GOLD on xyz                HIP-3 builder market (xyz:GOLD)
 
 BOTS (automated, run in background):
   start grid <market>               Start grid trading bot
@@ -71,7 +77,7 @@ SETUP:
   setup                             Full setup walkthrough
   help                              Show this message
 
-All amounts are in USD.
+All amounts are in USD. HIP-3 markets use dex:COIN format (xyz:GOLD, flx:XMR).
 ```
 
 ## Safety Warnings
@@ -139,65 +145,29 @@ If this works, setup is complete and the user can use Quick Trading commands.
 
 ## Bot Setup (for automated trading)
 
-Bots run continuously and need a config file. Walk through these steps when the user wants to start a bot.
+Bots need a config file. Use `create_config.py` to generate one automatically (fetches correct market decimals). Parse the user's request and run the matching command:
 
-### Choose a Strategy
+| User says | You run |
+|-----------|---------|
+| `start mm for HYPE` | `cd perplobster && source venv/bin/activate && python scripts/create_config.py mm HYPE` |
+| `mm for UNI at 80 bps` | `cd perplobster && source venv/bin/activate && python scripts/create_config.py mm UNI --spread 80` |
+| `mm for HYPE, $25 orders, 5x leverage` | `cd perplobster && source venv/bin/activate && python scripts/create_config.py mm HYPE --spread 15 --size 25 --leverage 5` |
+| `grid bot for xyz:SILVER` | `cd perplobster && source venv/bin/activate && python scripts/create_config.py grid xyz:SILVER` |
+| `grid for HYPE with long bias` | `cd perplobster && source venv/bin/activate && python scripts/create_config.py grid HYPE --bias long` |
 
-| Strategy | Best For | Config to copy |
-|----------|----------|---------------|
-| **Perp Market Making** | Earning spread on perpetual futures | `config/examples/perp_example.json` |
-| **Spot Market Making** | Making markets on HIP-1 spot tokens | `config/examples/spot_example.json` |
-| **Grid Trading** | Range-bound assets, farming, directional bets | `config/examples/grid_example.json` |
+The script creates the config and prints the start command. After the user confirms, start the bot:
 
-If unsure, recommend **Perp Market Making** — simplest and most liquid.
-
-### Configure
-
-1. Copy the example config:
 ```bash
-cd perplobster && cp config/examples/perp_example.json config/my_bot.json
+cd perplobster && ./start.sh config/<market>_mm.json
 ```
 
-2. Get correct decimals for the market:
-```bash
-cd perplobster && source venv/bin/activate && python scripts/check_market.py HYPE
-```
-Replace `HYPE` with their chosen asset.
+**Options:** `--spread <bps>`, `--size <usd>`, `--max-pos <usd>`, `--leverage <n>`, `--bias long/short/neutral` (grid), `--levels <n>` (grid), `--spacing <pct>` (grid)
 
-3. Edit `config/my_bot.json` with the check_market output. Key fields:
-   - `market`: Asset name (e.g., "ETH", "HYPE")
-   - `exchange.price_decimals`: From check_market output
-   - `exchange.size_decimals`: From check_market output
-   - `trading.base_order_size`: Start with 10-20 USD
-   - `position.max_position_usd`: Max exposure (start 50-100 USD)
-   - `position.leverage`: 3x is a safe default
+If unsure which strategy, recommend **Perp Market Making** (mm) for liquid perps and **Grid Trading** (grid) for HIP-3 builder markets.
 
-For subaccounts, add:
-```json
-"account": {
-    "subaccount_address": "0xSubaccountAddress",
-    "is_subaccount": true
-}
-```
-
-### Start the Bot
-
-**Ask the user:** "Config is ready. Start the bot now?"
-
-After they confirm, run:
-```bash
-cd perplobster && ./start.sh config/my_bot.json
-```
-
-Check logs:
-```bash
-tail -20 perplobster/logs/my_bot.log
-```
-
-Stop:
-```bash
-cd perplobster && ./stop.sh config/my_bot.json
-```
+Check logs: `tail -20 perplobster/logs/<market>_mm.log`
+Stop: `cd perplobster && ./stop.sh config/<market>_mm.json`
+Stop all: `cd perplobster && ./stop.sh --all`
 
 ### Dashboard (Optional)
 
@@ -208,10 +178,12 @@ Tell the user to open http://localhost:5050.
 
 ## Hyperliquid Market Types
 
-- **Standard Perps**: Just the ticker — `"ETH"`, `"BTC"`, `"HYPE"`, `"ICP"`
-- **HIP-3 Builder Perps**: Dex prefix — `"xyz:COPPER"`, `"flx:XMR"` (set `dex` field)
-- **HIP-1 Builder Spot**: Index format — `"@260"` for XMR1 (needs `perp_coin` oracle)
+- **Standard Perps**: Just the ticker — `"ETH"`, `"BTC"`, `"HYPE"`, `"ICP"` — config: `"dex": ""`
+- **HIP-3 Builder Perps**: Dex prefix — `"xyz:GOLD"`, `"flx:XMR"` — config: `"dex": "xyz"` or `"flx"`
+- **HIP-1 Builder Spot**: Index format — `"@260"` for XMR1 — needs `perp_coin` oracle
 - **Canonical Spot**: Pair format — `"PURR/USDC"`
+
+**HIP-3 builder markets** are less liquid but have less competition. Good for grid trading and airdrop farming. Known dex prefixes: `xyz`, `flx`. Use `check_market.py xyz:GOLD` to look up any HIP-3 market.
 
 ## Troubleshooting
 
@@ -221,6 +193,8 @@ Tell the user to open http://localhost:5050.
 - **"Rate limited"**: Enable `smart_order_mgmt_enabled: true` and increase `update_threshold_bps`.
 - **422 errors with fromhex()**: Wallet addresses must be full 42-character hex (0x + 40 chars).
 - **Orders not showing**: Check `subaccount_address` and `is_subaccount: true` in config.
+- **HIP-3 market not found**: Use `dex:COIN` format (e.g., `xyz:GOLD` not just `GOLD`). Set `"dex": "xyz"` in config.
+- **HIP-3 orders failing**: Ensure both `"market": "xyz:GOLD"` and `"dex": "xyz"` are set in your config file.
 
 ## Emergency Stop
 

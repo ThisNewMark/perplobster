@@ -45,13 +45,11 @@ def save_settings(settings):
 # ============================================================================
 
 def get_market_info(symbol: str) -> dict:
-    """Look up market info from Hyperliquid API"""
+    """Look up market info from Hyperliquid API (cached)"""
     try:
-        from hyperliquid.info import Info
-        from hyperliquid.utils import constants
+        from cached_info import get_meta, get_spot_meta
 
-        info = Info(constants.MAINNET_API_URL, skip_ws=True)
-        meta = info.meta()
+        meta = get_meta()
 
         # Search in perp markets
         for market in meta.get('universe', []):
@@ -66,7 +64,7 @@ def get_market_info(symbol: str) -> dict:
                 }
 
         # Search in spot markets
-        spot_meta = info.spot_meta()
+        spot_meta = get_spot_meta()
         for i, market in enumerate(spot_meta.get('tokens', [])):
             if market.get('name', '').upper() == symbol.upper():
                 return {
@@ -101,13 +99,10 @@ def get_market_info(symbol: str) -> dict:
 
 
 def get_spot_coin_id(symbol: str) -> dict:
-    """Get the spot coin identifier for Hyperliquid"""
+    """Get the spot coin identifier for Hyperliquid (cached)"""
     try:
-        from hyperliquid.info import Info
-        from hyperliquid.utils import constants
-
-        info = Info(constants.MAINNET_API_URL, skip_ws=True)
-        spot_meta = info.spot_meta()
+        from cached_info import get_spot_meta
+        spot_meta = get_spot_meta()
 
         results = []
 
@@ -279,10 +274,9 @@ def get_performance_metrics(config_filename: str, window: str = '24h') -> dict:
 
 
 def _get_hl_info():
-    """Create a Hyperliquid Info client with HIP-3 support"""
-    from hyperliquid.info import Info
-    from hyperliquid.utils import constants
-    return Info(constants.MAINNET_API_URL, skip_ws=True, perp_dexs=["", "xyz", "flx"])
+    """Get shared Hyperliquid Info client with HIP-3 support (cached)"""
+    from cached_info import get_info
+    return get_info()
 
 
 def _get_all_addresses() -> list:
@@ -292,9 +286,10 @@ def _get_all_addresses() -> list:
 
 
 def get_account_balances(address: str = None) -> dict:
-    """Get account balances (USDC + spot tokens + perp margin summary)"""
+    """Get account balances (USDC + spot tokens + perp margin summary) (cached)"""
     try:
-        info = _get_hl_info()
+        from cached_info import get_user_state, cached_call, get_info
+        info = get_info()
 
         if address:
             accounts = [{'address': address, 'label': 'Requested'}]
@@ -307,18 +302,31 @@ def get_account_balances(address: str = None) -> dict:
             if not addr:
                 continue
 
-            # Perp account state (margin, account value)
-            user_state = info.user_state(addr)
-            margin = user_state.get('marginSummary', {})
+            # Perp account state (margin, account value) — cached 30s
+            user_state = get_user_state(addr)
+            margin = user_state.get('crossMarginSummary') or user_state.get('marginSummary', {})
 
-            # Spot balances
-            spot_resp = info.post("/info", {"type": "spotClearinghouseState", "user": addr})
+            # Unified account mode returns $0 — fall back to portfolio()
+            acct_value = margin.get('accountValue', '0.0')
+            if float(acct_value) == 0.0:
+                try:
+                    portfolio = cached_call(f'portfolio:{addr}', info.portfolio, ttl=60, args=(addr,))
+                    if portfolio and len(portfolio) > 0:
+                        history = portfolio[0][1].get('accountValueHistory', [])
+                        if history:
+                            acct_value = history[-1][1]
+                except Exception:
+                    pass
+
+            # Spot balances (cached 30s)
+            spot_resp = cached_call(f'spot_state:{addr}', info.post, ttl=30,
+                                   args=("/info", {"type": "spotClearinghouseState", "user": addr}))
             spot_balances = spot_resp.get('balances', []) if isinstance(spot_resp, dict) else []
 
             results.append({
                 'label': acct['label'],
                 'address': addr[:10] + '...' + addr[-4:],
-                'account_value_usd': margin.get('accountValue'),
+                'account_value_usd': acct_value,
                 'total_margin_used': margin.get('totalMarginUsed'),
                 'withdrawable': margin.get('withdrawable'),
                 'total_notional_position': margin.get('totalNtlPos'),
@@ -335,9 +343,9 @@ def get_account_balances(address: str = None) -> dict:
 
 
 def get_open_positions(address: str = None) -> dict:
-    """Get current open perp positions with PnL"""
+    """Get current open perp positions with PnL (cached)"""
     try:
-        info = _get_hl_info()
+        from cached_info import get_user_state
 
         if address:
             accounts = [{'address': address, 'label': 'Requested'}]
@@ -350,7 +358,7 @@ def get_open_positions(address: str = None) -> dict:
             if not addr:
                 continue
 
-            user_state = info.user_state(addr)
+            user_state = get_user_state(addr)
             positions = []
             for pos in user_state.get('assetPositions', []):
                 p = pos.get('position', {})
@@ -382,9 +390,9 @@ def get_open_positions(address: str = None) -> dict:
 
 
 def get_open_orders(address: str = None) -> dict:
-    """Get current open orders"""
+    """Get current open orders (cached)"""
     try:
-        info = _get_hl_info()
+        from cached_info import get_open_orders as cached_open_orders
 
         if address:
             accounts = [{'address': address, 'label': 'Requested'}]
@@ -402,10 +410,7 @@ def get_open_orders(address: str = None) -> dict:
             orders = []
             for dex in dexes:
                 try:
-                    if dex:
-                        dex_orders = info.open_orders(addr, dex=dex)
-                    else:
-                        dex_orders = info.open_orders(addr)
+                    dex_orders = cached_open_orders(addr, dex=dex)
                     for o in dex_orders:
                         orders.append({
                             'coin': o.get('coin'),
@@ -433,10 +438,10 @@ def get_open_orders(address: str = None) -> dict:
 
 
 def get_current_prices(symbols: list = None) -> dict:
-    """Get current mark prices for markets"""
+    """Get current mark prices for markets (cached)"""
     try:
-        info = _get_hl_info()
-        all_mids = info.all_mids()
+        from cached_info import get_all_mids
+        all_mids = get_all_mids()
 
         if symbols:
             filtered = {}
@@ -475,9 +480,9 @@ def get_current_prices(symbols: list = None) -> dict:
 
 
 def get_recent_fills_live(address: str = None, limit: int = 20) -> dict:
-    """Get recent fills from Hyperliquid API (live, not just DB)"""
+    """Get recent fills from Hyperliquid API (cached 30s)"""
     try:
-        info = _get_hl_info()
+        from cached_info import get_user_fills
 
         if address:
             accounts = [{'address': address, 'label': 'Requested'}]
@@ -491,7 +496,7 @@ def get_recent_fills_live(address: str = None, limit: int = 20) -> dict:
                 continue
 
             try:
-                fills = info.user_fills(addr)
+                fills = get_user_fills(addr)
                 recent = fills[:limit] if fills else []
                 formatted = []
                 for f in recent:
@@ -522,16 +527,13 @@ def get_recent_fills_live(address: str = None, limit: int = 20) -> dict:
 
 
 def get_asset_info(asset: str) -> dict:
-    """Get detailed asset info including price_decimals, size_decimals, tick size, max leverage, and mark price."""
+    """Get detailed asset info including price_decimals, size_decimals, tick size, max leverage, and mark price (cached)."""
     try:
-        from hyperliquid.info import Info
-        from hyperliquid.utils import constants
-
-        info = Info(constants.MAINNET_API_URL, skip_ws=True)
+        from cached_info import get_meta_and_asset_ctxs
         asset_upper = asset.upper()
 
-        # --- Check perp markets first ---
-        meta_ctx = info.post('/info', {'type': 'metaAndAssetCtxs'})
+        # --- Check perp markets first (cached 60s) ---
+        meta_ctx = get_meta_and_asset_ctxs()
         universe = meta_ctx[0]['universe']
         contexts = meta_ctx[1]
 
@@ -581,7 +583,10 @@ def get_asset_info(asset: str) -> dict:
                 }
 
         # --- Check spot markets ---
-        spot_meta = info.post('/info', {'type': 'spotMetaAndAssetCtxs'})
+        from cached_info import get_info, cached_call
+        info = get_info()
+        spot_meta = cached_call('spot_meta_and_ctx', info.post, ttl=300,
+                                args=('/info', {'type': 'spotMetaAndAssetCtxs'}))
         spot_tokens = spot_meta[0].get('tokens', [])
         spot_universe = spot_meta[0].get('universe', [])
         spot_contexts = spot_meta[1]

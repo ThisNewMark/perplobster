@@ -10,6 +10,8 @@ Powered by [Vibetrade.cc](https://vibetrade.cc)
 - **Spot Market Maker** - Make markets on HIP-1 spot tokens with perp oracle pricing
 - **Grid Trader** - Grid trading with directional bias for range-bound assets
 
+Supports all Hyperliquid market types: standard perps, HIP-3 builder perps (xyz, flx), HIP-1 builder spot, and canonical spot.
+
 ## Features
 
 - Event-driven WebSocket architecture (100-300ms latency)

@@ -747,16 +747,9 @@ def create_perp_dashboard_blueprint(market_name, route_prefix, database_path=Non
             else:
                 account_address = get_credentials()['account_address']
 
-            from hyperliquid.info import Info
-            from hyperliquid.utils import constants
+            from cached_info import get_user_state, get_meta
 
-            # HIP-3 markets (like xyz:GOLD) need perp_dexs parameter
-            if ':' in MARKET_API:
-                dex = MARKET_API.split(':')[0]
-                info = Info(constants.MAINNET_API_URL, skip_ws=True, perp_dexs=["", dex])
-            else:
-                info = Info(constants.MAINNET_API_URL, skip_ws=True)
-            user_state = info.user_state(account_address)
+            user_state = get_user_state(account_address)
 
             asset_positions = user_state.get('assetPositions', [])
             perp_position = next(
@@ -784,11 +777,30 @@ def create_perp_dashboard_blueprint(market_name, route_prefix, database_path=Non
                     'liquidation_px': None
                 }
 
-            margin_summary = user_state.get('marginSummary', {})
+            # Use crossMarginSummary (not marginSummary) — this includes cross margin
+            # collateral properly and matches what the Hyperliquid UI shows as Portfolio Value
+            margin_summary = user_state.get('crossMarginSummary') or user_state.get('marginSummary', {})
+            account_value = float(margin_summary.get('accountValue', 0.0))
+            total_margin_used = float(margin_summary.get('totalMarginUsed', 0.0))
+            total_ntl_pos = float(margin_summary.get('totalNtlPos', 0.0))
+
+            # Unified account mode returns $0 for clearinghouse — use portfolio() as fallback
+            if account_value == 0.0:
+                try:
+                    from cached_info import get_info, cached_call
+                    _info = get_info()
+                    portfolio = cached_call(f'portfolio:{account_address}', _info.portfolio, ttl=60, args=(account_address,))
+                    if portfolio and len(portfolio) > 0:
+                        history = portfolio[0][1].get('accountValueHistory', [])
+                        if history:
+                            account_value = float(history[-1][1])
+                except Exception:
+                    pass
+
             margin = {
-                'account_value': float(margin_summary.get('accountValue', 0.0)),
-                'total_margin_used': float(margin_summary.get('totalMarginUsed', 0.0)),
-                'total_ntl_pos': float(margin_summary.get('totalNtlPos', 0.0))
+                'account_value': account_value,
+                'total_margin_used': total_margin_used,
+                'total_ntl_pos': total_ntl_pos
             }
 
             if margin['total_margin_used'] > 0:
@@ -797,9 +809,16 @@ def create_perp_dashboard_blueprint(market_name, route_prefix, database_path=Non
                 # No position = no margin used = no liquidation risk, return None to skip alert
                 margin['margin_ratio_pct'] = None
 
-            meta = info.meta()
+            # Get metadata for funding rate (HIP-3 markets need dex param)
+            dex = MARKET_API.split(':')[0] if ':' in MARKET_API else ''
+            meta = get_meta(dex=dex)
             universe = meta.get('universe', [])
-            market_info = next((m for m in universe if m['name'] == MARKET_API), None)
+            # Match by bare coin name since meta(dex=) may return prefixed names
+            coin = MARKET_API.split(':')[-1] if ':' in MARKET_API else MARKET_API
+            market_info = next(
+                (m for m in universe if m['name'] == MARKET_API or m['name'].split(':')[-1] == coin),
+                None
+            )
 
             funding_rate = 0.0
             if market_info:
@@ -1873,7 +1892,7 @@ def create_perp_dashboard_blueprint(market_name, route_prefix, database_path=Non
                         // No position = no margin used = safe
                         document.getElementById('sum-margin-ratio').innerHTML = '<span class="neutral">No Position</span>';
                     } else {
-                        const marginClass = marginRatio > 500 ? 'positive' : marginRatio > 200 ? 'warning' : 'negative';
+                        const marginClass = marginRatio > 200 ? 'positive' : marginRatio > 120 ? 'warning' : 'negative';
                         document.getElementById('sum-margin-ratio').innerHTML = `<span class="${marginClass}">${marginRatio.toFixed(0)}%</span>`;
                     }
                     document.getElementById('sum-account-value').innerHTML = '$' + lp.margin.account_value.toFixed(2);
@@ -2051,11 +2070,13 @@ def create_perp_dashboard_blueprint(market_name, route_prefix, database_path=Non
             if (livePosition && livePosition.margin) {
                 const marginRatio = livePosition.margin.margin_ratio_pct;
                 // Only show margin alert if there's actually a position (marginRatio is not null)
-                if (marginRatio !== null && marginRatio !== undefined && marginRatio < 150) {
+                // Margin ratio = account_value / initial_margin_used. Liquidation happens when
+                // equity drops below maintenance margin (~50% of initial), so ratio < 110% is critical.
+                if (marginRatio !== null && marginRatio !== undefined && marginRatio < 110) {
                     alerts.push({
                         type: 'critical',
                         icon: '⚠️',
-                        message: `LOW MARGIN: ${marginRatio.toFixed(0)}% margin ratio - liquidation risk!`
+                        message: `LOW MARGIN: ${marginRatio.toFixed(0)}% margin ratio - approaching liquidation!`
                     });
                 }
             }

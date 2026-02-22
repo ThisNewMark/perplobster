@@ -7,7 +7,7 @@ Includes bot start/stop controls
 import os
 import sys
 import json
-from flask import Blueprint, render_template_string, request, jsonify, redirect, url_for
+from flask import Blueprint, render_template_string, request, jsonify, redirect, url_for, Response
 from typing import Dict, Any, Optional
 
 # Add lib to path for bot_manager import
@@ -293,6 +293,50 @@ def create_config_editor_blueprint(config_dir: str, examples_dir: str, bots_dir:
         n = request.args.get('n', 50, type=int)
         return jsonify(bot_manager.get_logs(filename, n))
 
+    @bp.route('/api/bot/logs/<filename>/stream')
+    def bot_logs_stream(filename: str):
+        """SSE endpoint for real-time log streaming"""
+        import queue as queue_mod
+
+        if not bot_manager:
+            def error_stream():
+                yield "data: {\"error\": \"Bot manager not initialized\"}\n\n"
+            return Response(error_stream(), mimetype='text/event-stream')
+
+        q, history = bot_manager.subscribe_bot_logs(filename)
+        if q is None:
+            def error_stream():
+                yield "data: {\"error\": \"Bot not found\"}\n\n"
+            return Response(error_stream(), mimetype='text/event-stream')
+
+        def generate():
+            try:
+                # Send log history first
+                for line in history:
+                    yield f"data: {json.dumps({'line': line})}\n\n"
+                # Stream new lines as they arrive
+                while True:
+                    try:
+                        line = q.get(timeout=15)
+                        yield f"data: {json.dumps({'line': line})}\n\n"
+                    except queue_mod.Empty:
+                        # Send keepalive to prevent connection timeout
+                        yield ": keepalive\n\n"
+            except GeneratorExit:
+                pass
+            finally:
+                bot_manager.unsubscribe_bot_logs(filename, q)
+
+        return Response(
+            generate(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'X-Accel-Buffering': 'no',
+                'Connection': 'keep-alive',
+            }
+        )
+
     @bp.route('/api/bot/stop-all', methods=['POST'])
     def stop_all_bots():
         """Stop all running bots"""
@@ -313,7 +357,7 @@ CONFIG_LIST_TEMPLATE = '''
 <head>
     <title>Config Manager - Perp Lobster</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Log streaming uses native SSE (EventSource) - no external dependencies -->
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -629,11 +673,6 @@ CONFIG_LIST_TEMPLATE = '''
         }
         .ws-status.connected .ws-dot { background: #10b981; }
         .ws-status.connected { color: #10b981; }
-        .ws-status.connecting .ws-dot {
-            background: #f59e0b;
-            animation: pulse 1s infinite;
-        }
-        .ws-status.connecting { color: #f59e0b; }
 
         /* Modal for delete confirmation */
         .modal {
@@ -672,9 +711,9 @@ CONFIG_LIST_TEMPLATE = '''
                 <a href="/ai" class="back-link" style="color: #8b5cf6;" title="AI Settings">⚙️</a>
             </div>
             <div class="header-actions">
-                <div class="ws-status connecting" id="wsStatus">
+                <div class="ws-status connected" id="wsStatus">
                     <span class="ws-dot"></span>
-                    <span id="wsStatusText">Connecting...</span>
+                    <span id="wsStatusText">Live</span>
                 </div>
                 <span class="running-count" id="runningCount" style="display: none;">0 running</span>
                 <button class="btn btn-danger btn-small" id="stopAllBtn" onclick="stopAllAndCancel()" title="Stop all bots and cancel orders" style="display: none;">Stop All</button>
@@ -777,130 +816,11 @@ CONFIG_LIST_TEMPLATE = '''
         let deleteTarget = null;
         let logsTarget = null;
         let statusInterval = null;
-        let socket = null;
-        let useWebSocket = false;
+        let logEventSource = null;  // SSE connection for log streaming
 
         // =====================================================================
-        // WEBSOCKET CONNECTION
+        // STATUS POLLING (reliable HTTP-based)
         // =====================================================================
-
-        function initWebSocket() {
-            console.log('[PerpLobster] Attempting WebSocket initialization...');
-            console.log('[PerpLobster] io object exists:', typeof io !== 'undefined');
-
-            if (typeof io === 'undefined') {
-                console.log('[PerpLobster] Socket.IO library not loaded - check CDN or network');
-                return false;
-            }
-
-            try {
-                console.log('[PerpLobster] Creating Socket.IO connection...');
-                socket = io({
-                    transports: ['websocket', 'polling'],
-                    reconnection: true,
-                    reconnectionAttempts: 5,
-                    reconnectionDelay: 1000
-                });
-
-                socket.on('connect_error', function(err) {
-                    console.error('[PerpLobster] Connection error:', err.message);
-                    updateWsStatus('disconnected');
-                });
-
-                // Timeout: if not connected within 5 seconds, fall back to polling
-                setTimeout(function() {
-                    if (!socket.connected) {
-                        console.log('[PerpLobster] WebSocket connection timeout, falling back to polling');
-                        updateWsStatus('disconnected');
-                        startPolling();
-                        // Do initial fetch
-                        refreshAllStatus().then(updateRunningCount);
-                    }
-                }, 5000);
-
-                socket.on('connect', function() {
-                    console.log('[PerpLobster] WebSocket connected!');
-                    useWebSocket = true;
-                    updateWsStatus('connected');
-                    // Stop polling if it was running
-                    if (statusInterval) {
-                        clearInterval(statusInterval);
-                        statusInterval = null;
-                    }
-                    // Get initial status
-                    socket.emit('get_all_status');
-                });
-
-                socket.on('disconnect', function() {
-                    console.log('[PerpLobster] WebSocket disconnected, falling back to polling');
-                    useWebSocket = false;
-                    updateWsStatus('disconnected');
-                    startPolling();
-                });
-
-                socket.on('connected', function(data) {
-                    console.log('[PerpLobster] Server confirmed connection:', data);
-                });
-
-                socket.on('bot_log', function(data) {
-                    // Real-time log line from a bot
-                    if (logsTarget && data.config_file === logsTarget) {
-                        appendLogLine(data.line);
-                    }
-                });
-
-                socket.on('log_history', function(data) {
-                    // Received log history for a bot
-                    if (data.config_file === logsTarget) {
-                        displayLogs(data.logs);
-                    }
-                });
-
-                socket.on('bot_status', function(data) {
-                    // Real-time status update
-                    console.log('[PerpLobster] Status update:', data);
-                    if (data.status === 'started') {
-                        updateCardStatus(data.config_file, true, data.data.pid, data.data.uptime);
-                    } else if (data.status === 'stopped') {
-                        updateCardStatus(data.config_file, false);
-                    }
-                    updateRunningCount();
-                });
-
-                socket.on('all_status', function(data) {
-                    // Full status update for all bots
-                    handleAllStatus(data.bots);
-                });
-
-                socket.on('error', function(data) {
-                    console.error('[PerpLobster] WebSocket error:', data.message);
-                });
-
-                return true;
-            } catch (err) {
-                console.error('[PerpLobster] Failed to init WebSocket:', err);
-                return false;
-            }
-        }
-
-        function handleAllStatus(bots) {
-            // Reset all cards to stopped first
-            document.querySelectorAll('.config-card').forEach(card => {
-                const filename = card.dataset.filename;
-                updateCardStatus(filename, false);
-            });
-
-            // Update running bots
-            if (bots && bots.length > 0) {
-                bots.forEach(bot => {
-                    if (bot.running) {
-                        updateCardStatus(bot.config_file, true, bot.pid, bot.uptime);
-                    }
-                });
-            }
-
-            updateRunningCount();
-        }
 
         function updateRunningCount() {
             const runningBots = document.querySelectorAll('.status-indicator.running').length;
@@ -920,9 +840,10 @@ CONFIG_LIST_TEMPLATE = '''
         }
 
         function startPolling() {
-            if (statusInterval) return; // Already polling
-            console.log('[PerpLobster] Starting status polling...');
-            statusInterval = setInterval(refreshAllStatus, 5000);
+            if (statusInterval) return;
+            statusInterval = setInterval(function() {
+                refreshAllStatus().then(updateRunningCount);
+            }, 3000);
         }
 
         function updateWsStatus(status) {
@@ -931,10 +852,8 @@ CONFIG_LIST_TEMPLATE = '''
             wsStatusEl.className = 'ws-status ' + status;
             if (status === 'connected') {
                 wsTextEl.textContent = 'Live';
-            } else if (status === 'connecting') {
-                wsTextEl.textContent = 'Connecting...';
             } else {
-                wsTextEl.textContent = 'Polling';
+                wsTextEl.textContent = 'Auto-refresh';
             }
         }
 
@@ -953,6 +872,11 @@ CONFIG_LIST_TEMPLATE = '''
             if (modalId === 'deleteModal') deleteTarget = null;
             if (modalId === 'logsModal') {
                 logsTarget = null;
+                // Close SSE stream if open
+                if (logEventSource) {
+                    logEventSource.close();
+                    logEventSource = null;
+                }
                 // Reset live indicator
                 document.getElementById('liveIndicator').classList.add('hidden');
                 document.getElementById('refreshLogsBtn').style.display = 'inline-block';
@@ -1210,16 +1134,63 @@ CONFIG_LIST_TEMPLATE = '''
 
             const liveIndicator = document.getElementById('liveIndicator');
             const refreshBtn = document.getElementById('refreshLogsBtn');
+            const container = document.getElementById('logsContainer');
 
-            // If WebSocket is connected, subscribe for real-time logs
-            if (useWebSocket && socket && socket.connected) {
-                document.getElementById('logsContainer').innerHTML = '<div class="log-line">Connecting to log stream...</div>';
-                socket.emit('subscribe_logs', { config_file: filename });
-                // Show live indicator, hide refresh button
-                liveIndicator.classList.remove('hidden');
-                refreshBtn.style.display = 'none';
-            } else {
-                // Fallback to HTTP fetch
+            // Close any existing SSE stream
+            if (logEventSource) {
+                logEventSource.close();
+                logEventSource = null;
+            }
+
+            // Try SSE streaming first
+            container.innerHTML = '<div class="log-line">Connecting to log stream...</div>';
+
+            try {
+                logEventSource = new EventSource('/config/api/bot/logs/' + filename + '/stream');
+                let gotFirstMessage = false;
+
+                logEventSource.onmessage = function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.error) {
+                            container.innerHTML = '<div class="log-line error">' + escapeHtml(data.error) + '</div>';
+                            logEventSource.close();
+                            logEventSource = null;
+                            liveIndicator.classList.add('hidden');
+                            refreshBtn.style.display = 'inline-block';
+                            return;
+                        }
+                        if (!gotFirstMessage) {
+                            container.innerHTML = '';
+                            gotFirstMessage = true;
+                            // Show live indicator, hide refresh
+                            liveIndicator.classList.remove('hidden');
+                            refreshBtn.style.display = 'none';
+                            updateWsStatus('connected');
+                        }
+                        appendLogLine(data.line);
+                    } catch (e) {
+                        // Ignore parse errors (keepalive comments)
+                    }
+                };
+
+                logEventSource.onerror = function() {
+                    console.log('[PerpLobster] SSE connection lost, falling back to manual refresh');
+                    if (logEventSource) {
+                        logEventSource.close();
+                        logEventSource = null;
+                    }
+                    liveIndicator.classList.add('hidden');
+                    refreshBtn.style.display = 'inline-block';
+                    updateWsStatus('disconnected');
+                    // If we never got data, do a manual fetch
+                    if (!gotFirstMessage) {
+                        refreshLogs();
+                    }
+                };
+            } catch (err) {
+                // EventSource not supported or other error — manual refresh
+                console.error('[PerpLobster] SSE not available:', err);
                 liveIndicator.classList.add('hidden');
                 refreshBtn.style.display = 'inline-block';
                 await refreshLogs();
@@ -1247,31 +1218,22 @@ CONFIG_LIST_TEMPLATE = '''
 
         try {
             console.log('[PerpLobster] Initializing...');
-            updateWsStatus('connecting');
+            updateWsStatus('connected');
 
-            // Try WebSocket first
-            if (initWebSocket()) {
-                console.log('[PerpLobster] WebSocket initialized, waiting for connection...');
-                // Connection status will be updated by socket.on('connect')
-            } else {
-                console.log('[PerpLobster] WebSocket not available, using polling');
-                updateWsStatus('disconnected');
-                // Initial status check via HTTP
-                refreshAllStatus().then(() => {
-                    console.log('[PerpLobster] Initial status check complete');
-                    updateRunningCount();
-                }).catch(err => {
-                    console.error('[PerpLobster] Initial status check failed:', err);
-                });
-                // Start polling
-                startPolling();
-            }
+            // Initial status check
+            refreshAllStatus().then(() => {
+                console.log('[PerpLobster] Initial status check complete');
+                updateRunningCount();
+            }).catch(err => {
+                console.error('[PerpLobster] Initial status check failed:', err);
+            });
+
+            // Start auto-refresh polling for bot status
+            startPolling();
 
             console.log('[PerpLobster] Config Manager ready!');
         } catch (initErr) {
             console.error('[PerpLobster] Initialization error:', initErr);
-            updateWsStatus('disconnected');
-            // Fallback to polling on any error
             startPolling();
         }
 

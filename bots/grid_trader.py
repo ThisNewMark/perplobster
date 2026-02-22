@@ -289,13 +289,26 @@ def get_position() -> Dict:
 
 
 def get_account_value() -> Dict:
-    """Get account value and margin info"""
+    """Get account value and margin info.
+    Falls back to portfolio() when unified account mode returns $0."""
     try:
         user_state = info.user_state(account_address)
-        margin_summary = user_state.get('marginSummary', {})
+        margin_summary = user_state.get('crossMarginSummary') or user_state.get('marginSummary', {})
 
         account_value = float(margin_summary.get('accountValue', 0.0))
         total_margin_used = float(margin_summary.get('totalMarginUsed', 0.0))
+
+        # Unified account mode returns $0 for clearinghouse — use portfolio() as fallback
+        if account_value == 0.0:
+            try:
+                portfolio = info.portfolio(account_address)
+                if portfolio and len(portfolio) > 0:
+                    history = portfolio[0][1].get('accountValueHistory', [])
+                    if history:
+                        account_value = float(history[-1][1])
+            except Exception:
+                pass
+
         margin_ratio_pct = (account_value / total_margin_used * 100) if total_margin_used > 0 else 0
 
         return {
@@ -913,21 +926,26 @@ def record_fill_to_db(fill: Dict):
 # ============================================================
 
 def set_leverage():
-    """Set leverage for this market"""
+    """Set leverage for this market. Tries isolated first, falls back to cross."""
     try:
         print(f"Setting leverage to {LEVERAGE}x for {MARKET_NAME}...")
 
-        # HIP-3 markets use isolated margin by default
-        # The leverage call may need the full market name with dex prefix
+        # Try isolated margin first — works on all assets including HIP-3
         result = exchange.update_leverage(LEVERAGE, MARKET_NAME, is_cross=False)
 
         if result.get('status') == 'ok':
             print(f"   Leverage set to {LEVERAGE}x (isolated margin)")
+            return
+
+        # If isolated fails, try cross margin
+        print(f"   Isolated margin failed, trying cross margin...")
+        result = exchange.update_leverage(LEVERAGE, MARKET_NAME, is_cross=True)
+
+        if result.get('status') == 'ok':
+            print(f"   Leverage set to {LEVERAGE}x (cross margin)")
         else:
             print(f"   Leverage update response: {result}")
-            if IS_HIP3_MARKET:
-                print(f"   Note: HIP-3 markets default to isolated margin")
-                print(f"   You may need to set leverage manually in the UI")
+            print(f"   Continuing anyway - set leverage manually in Hyperliquid UI")
 
     except Exception as e:
         print(f"   Error setting leverage: {e}")
