@@ -6,7 +6,7 @@
 
   "trading": {
     "base_order_size": 15,
-    "min_order_size": 0.1,
+    "min_order_size": 0.0001,
     "size_increment": 0.01,
     "base_spread_bps": 15,
     "min_spread_bps": 8,

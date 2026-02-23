@@ -1582,7 +1582,7 @@ CONFIG_EDITOR_TEMPLATE = '''
                     </div>
                     <div class="form-group">
                         <label>Min Order Size</label>
-                        <input type="number" id="min_order_size" value="{{ config.get('trading', {}).get('min_order_size', 0.05) }}" step="0.01" min="0.01">
+                        <input type="number" id="min_order_size" value="{{ config.get('trading', {}).get('min_order_size', 0.0001) }}" step="0.0001" min="0.0001">
                     </div>
                     <div class="form-group">
                         <label>Base Spread (bps)</label>
