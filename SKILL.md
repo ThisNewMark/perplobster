@@ -89,7 +89,8 @@ Before placing a trade or starting a bot, remind the user:
 
 ## Security Rules
 
-- **NEVER ask the user to paste their private key in chat.** The user must edit the `.env` file themselves.
+- **Onboard credentials through the dashboard wizard, never through chat or by hand-editing `.env`.** The `/setup` wizard connects the user's browser wallet, has them sign in-wallet, and generates a trade-only API wallet — their main private key is never typed, pasted, or exposed. See Initial Setup below.
+- **NEVER ask the user to paste their private key in chat**, and never offer to edit `.env` for them.
 - **NEVER read, cat, echo, or display the contents of `.env`** or any file containing credentials.
 - The `.env` file stays local and is excluded from git via `.gitignore`.
 - Always show the user what a script does (via `cat`) and get their approval before running it for the first time.
@@ -100,7 +101,7 @@ A 0.01% (1 bps) builder fee is included on each trade to support ongoing develop
 
 ## Initial Setup (run these commands in order)
 
-When the user wants to set up Perp Lobster, run these commands in sequence:
+Credentials are set up in the browser via the dashboard wizard — the user connects their wallet and signs. You never handle, ask for, or paste a private key. Run these in sequence:
 
 **1. Clone the repo:**
 ```bash
@@ -111,37 +112,39 @@ git clone --branch v1.0 https://github.com/ThisNewMark/perplobster.git
 ```bash
 cat perplobster/setup.sh
 ```
-Tell the user: "This script creates a Python venv and installs dependencies. No data is sent externally. OK to run it?"
+Tell the user: "This script creates a Python venv, installs dependencies, and initializes the database. No data is sent externally. OK to run it?"
 
 **3. After the user approves, run setup:**
 ```bash
 cd perplobster && chmod +x setup.sh && ./setup.sh
 ```
 
-**4. User must configure credentials (you cannot do this for them).** Tell them:
-```
-Edit the .env file with your Hyperliquid credentials:
-  nano perplobster/.env
-
-Fill in:
-  HL_ACCOUNT_ADDRESS=0xYourWalletAddress
-  HL_SECRET_KEY=your_private_key_hex
-
-Do NOT paste your private key in this chat — edit the file directly.
-```
-Wait for the user to confirm they've done this.
-
-**5. Approve builder fee (one-time per wallet):**
+**4. Start the dashboard:**
 ```bash
-cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py
+cd perplobster && source venv/bin/activate && python dashboards/dashboard.py
 ```
-You should see "Builder fee approved" or "Builder fee already approved". If error, ask user to check `.env` credentials.
+
+**5. Onboard in the browser (the user does this — you cannot).** Tell them:
+```
+Open http://localhost:5050 in a browser that has your wallet extension
+(MetaMask, Rabby, Phantom, Rainbow, Coinbase Wallet, etc.).
+
+You'll be taken to the setup wizard. Complete the three steps:
+  1. Connect Wallet
+  2. Approve Builder Fee   (signature only — no gas)
+  3. Generate API Wallet   (creates a trade-only key; your main key stays safe)
+
+The wizard saves everything automatically. No private keys in chat.
+```
+Wait for the user to confirm they see "Setup Complete". The builder fee is approved during step 2 of the wizard, so no separate approval command is needed.
 
 **6. Test with a small trade:**
 ```bash
 cd perplobster && source venv/bin/activate && python scripts/trade.py long HYPE 1
 ```
 If this works, setup is complete and the user can use Quick Trading commands.
+
+> Fallback: if a user ever needs to re-approve the builder fee outside the dashboard, run `cd perplobster && source venv/bin/activate && python scripts/approve_builder_fee.py`.
 
 ## Bot Setup (for automated trading)
 

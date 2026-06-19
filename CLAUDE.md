@@ -4,7 +4,8 @@ This repo contains trading tools for Hyperliquid DEX: quick perp trades via comm
 
 ## Security Rules
 
-- **NEVER ask the user for their private key.** They must edit `.env` themselves.
+- **Onboard credentials through the dashboard wizard, never through chat.** The wizard at `/setup` connects the user's browser wallet, has them sign in-wallet, and generates a trade-only API wallet — the user's main private key is never typed, pasted, or exposed.
+- **NEVER ask the user for their private key** and **never offer to edit `.env` for them.** If they're not set up, point them to the wizard (see First-Time Setup).
 - **NEVER read, cat, or display the contents of `.env`.**
 - Confirm with the user before placing any trade.
 
@@ -66,32 +67,26 @@ tail -20 logs/my_bot.log
 
 ## First-Time Setup
 
-If `.env` doesn't exist or the venv isn't set up, walk through these steps:
+Onboarding happens in the browser via the setup wizard — the user connects their wallet and signs; no private keys are ever pasted into chat or `.env` by hand. If the venv isn't set up or `needs_setup()` is true, walk through these steps:
 
-1. Run `cat setup.sh` and show the user what it does. After they approve, run:
+1. Run `cat setup.sh` and show the user what it does (creates the venv, installs dependencies, initializes the database). After they approve, run:
    ```bash
    chmod +x setup.sh && ./setup.sh
    ```
 
-2. Tell the user to edit `.env` with their credentials:
-   ```
-   nano .env
-
-   Fill in:
-     HL_ACCOUNT_ADDRESS=0xYourWalletAddress
-     HL_SECRET_KEY=your_private_key_hex
-   ```
-   Wait for them to confirm.
-
-3. Approve builder fee:
+2. Start the dashboard:
    ```bash
-   source venv/bin/activate && python scripts/approve_builder_fee.py
+   source venv/bin/activate && python dashboards/dashboard.py
    ```
 
-4. Test with a small trade:
+3. Tell the user to open **http://localhost:5050** in a browser with their wallet extension (MetaMask, Rabby, etc.). They'll be redirected automatically to the `/setup` wizard, which walks through three signed steps — **Connect Wallet → Approve Builder Fee → Generate API Wallet**. The wizard writes credentials to `.env` itself; you never touch the key. Wait for them to confirm "Setup Complete".
+
+4. Once they're back, test with a small trade:
    ```bash
    source venv/bin/activate && python scripts/trade.py long HYPE 1
    ```
+
+> The builder fee is approved inside the wizard (step 2). The CLI `scripts/approve_builder_fee.py` remains available as a fallback if a user ever needs to re-approve without the dashboard.
 
 ## Bot Setup (one command)
 

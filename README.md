@@ -30,7 +30,14 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-Then edit `.env` with your Hyperliquid credentials and create a config file from the examples in `config/examples/`.
+Then start the dashboard and finish onboarding in your browser — no private keys to paste:
+
+```bash
+source venv/bin/activate && python dashboards/dashboard.py
+# Open http://localhost:5050
+```
+
+You'll be taken to the setup wizard: **connect your wallet**, **approve the builder fee** (signature only, no gas), and **generate a trade-only API wallet**. Your main wallet key never leaves your browser. After that, create a config file from the examples in `config/examples/` to run a bot.
 
 See the [full setup guide](SKILL.md) for detailed instructions.
 
