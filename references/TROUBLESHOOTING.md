@@ -4,11 +4,30 @@
 
 ### "Price must be divisible by tick size"
 **Cause**: Wrong `price_decimals` in your config file.
-**Fix**: Query the correct decimals for your asset. Hyperliquid uses 5 significant figures:
-- BTC (~$66,000): `price_decimals: 1`
-- ETH (~$1,900): `price_decimals: 2`
-- HYPE (~$28): `price_decimals: 3`
-- Small altcoins (<$1): `price_decimals: 4-5`
+**Fix**: Run `python scripts/check_market.py ASSET` — it computes the correct value.
+
+Hyperliquid accepts a price only if it has **≤ 5 significant figures** AND
+**≤ (MAX_DECIMALS − szDecimals) decimal places** (MAX_DECIMALS is 6 for perps,
+8 for spot). Integer prices are always allowed. The 5-significant-figure cap is
+what bites on higher-priced assets — the number of allowed decimals *shrinks* as
+price grows:
+- BTC (~$66,000): `price_decimals: 0` (66000 is already 5 sig figs)
+- ETH (~$1,900): `price_decimals: 1` (1900.5)
+- ZEC (~$453): `price_decimals: 2` (453.35 — `453.350` would be 6 sig figs and is rejected)
+- HYPE (~$28): `price_decimals: 3` (28.123)
+- Small altcoins (<$1): `price_decimals: 4-6`
+
+`check_market.py` and `create_config.py` apply this rule automatically (see
+`lib/price_utils.py`), so generated configs get the right value.
+
+### "Order has zero size" / "Order value below minimum" / orders silently rejected
+**Cause**: Order value is below Hyperliquid's **$10 minimum order value**.
+**Fix**: This is a flat $10 (10 USDC for spot) on **every** asset — there is no
+per-asset minimum. Set `base_order_size` (mm) / `order_size_usd` (grid) to at
+least $10. The only exception is a reduce-only order that exactly closes a
+position. `create_config.py` warns if your order size is below $10 and sets
+`min_order_size` to the $10-equivalent in contracts so the bot drops sub-$10
+orders locally instead of having the exchange reject them.
 
 ### "Post-only order would cross"
 **Cause**: Your bid price is above the best ask, or ask is below best bid.

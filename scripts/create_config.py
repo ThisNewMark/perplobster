@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+from price_utils import valid_price_decimals, min_order_size, MIN_ORDER_NOTIONAL_USD
 
 KNOWN_DEXES = ["", "xyz", "flx"]
 EXAMPLES_DIR = os.path.join(os.path.dirname(__file__), '..', 'config', 'examples')
@@ -75,15 +76,6 @@ def get_market_data(market_name, dex):
     return None
 
 
-def estimate_price_decimals(price):
-    if price >= 10000: return 1
-    elif price >= 1000: return 2
-    elif price >= 100: return 3
-    elif price >= 10: return 3
-    elif price >= 1: return 4
-    else: return 5
-
-
 def main():
     parser = argparse.ArgumentParser(
         description='Generate a bot config with correct market decimals',
@@ -129,7 +121,7 @@ def main():
 
     price = data['price']
     size_dec = data['size_decimals']
-    price_dec = estimate_price_decimals(price)
+    price_dec = valid_price_decimals(price, size_dec)
     max_lev = data['max_leverage']
 
     print(f"  Price: ${price}")
@@ -176,13 +168,13 @@ def main():
         if args.size:
             config['trading']['base_order_size'] = args.size
 
-        # Calculate min_order_size based on price — $1 worth at minimum
-        # This prevents silently dropping orders on expensive assets
+        # Set min_order_size to the contract-equivalent of Hyperliquid's $10
+        # minimum order value, so the bot drops sub-$10 orders locally instead
+        # of having the exchange reject them.
         if price > 0:
-            min_size = round(1.0 / price, size_dec)
-            # Ensure it's at least one unit at the smallest decimal
-            min_size = max(min_size, 10 ** -size_dec)
-            config['trading']['min_order_size'] = min_size
+            config['trading']['min_order_size'] = min_order_size(price, size_dec)
+
+        order_usd = config['trading'].get('base_order_size')
     else:
         config['description'] = f"Grid trader for {market_name}"
         config['grid']['bias'] = args.bias
@@ -190,6 +182,24 @@ def main():
         config['grid']['spacing_pct'] = args.spacing
         if args.size:
             config['grid']['order_size_usd'] = args.size
+
+        order_usd = config['grid'].get('order_size_usd')
+
+    # Warn if the order size is below Hyperliquid's $10 minimum order value.
+    if order_usd is not None and order_usd < MIN_ORDER_NOTIONAL_USD:
+        print(f"\n  ⚠️  Order size ${order_usd} is below Hyperliquid's "
+              f"${MIN_ORDER_NOTIONAL_USD:.0f} minimum order value — orders will "
+              f"be rejected. Increase it with --size {MIN_ORDER_NOTIONAL_USD:.0f} or more.")
+
+    # Sanity-check order sizing against max position (and grid level count).
+    max_pos = config['position'].get('max_position_usd')
+    if order_usd is not None and max_pos:
+        total_exposure = order_usd * (args.levels if args.strategy == 'grid' else 1)
+        if total_exposure > max_pos:
+            detail = (f"{order_usd} x {args.levels} levels = ${total_exposure}"
+                      if args.strategy == 'grid' else f"${total_exposure}")
+            print(f"\n  ⚠️  Order exposure ({detail}) exceeds max_position_usd "
+                  f"(${max_pos}). Raise --max-pos or lower --size/--levels.")
 
     # Determine output path
     if args.output:

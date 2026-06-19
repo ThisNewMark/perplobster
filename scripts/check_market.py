@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
 from hyperliquid.info import Info
 from hyperliquid.utils import constants
+from price_utils import valid_price_decimals
 
 # Known HIP-3 builder dex prefixes
 KNOWN_DEXES = ["", "xyz", "flx"]
@@ -45,14 +46,6 @@ def main():
 
     info = Info(constants.MAINNET_API_URL, skip_ws=True, perp_dexs=KNOWN_DEXES)
 
-    def estimate_decimals(price):
-        if price >= 10000: return 1
-        elif price >= 1000: return 2
-        elif price >= 100: return 3
-        elif price >= 10: return 3
-        elif price >= 1: return 4
-        else: return 5
-
     if dex:
         # HIP-3: meta_and_asset_ctxs() doesn't support dex param,
         # so use meta(dex=) + all_mids(dex=) instead
@@ -73,22 +66,24 @@ def main():
                         mid_price = float(mid_val)
                         break
 
+                sz_dec = asset.get('szDecimals', 2)
+                price_dec = valid_price_decimals(mid_price, sz_dec) if mid_price else None
                 full_name = f"{dex}:{asset_bare}" if ':' not in asset_name else asset_name
                 print(f"Asset: {full_name}")
                 if mid_price:
                     print(f"Mid price: {mid_price}")
-                    print(f"Suggested price_decimals: {estimate_decimals(mid_price)}")
+                    print(f"Suggested price_decimals: {price_dec}")
                 else:
                     print(f"Mid price: N/A (market may be inactive)")
-                print(f"Size decimals: {asset.get('szDecimals', 2)}")
+                print(f"Size decimals: {sz_dec}")
                 print(f"Max leverage: {asset.get('maxLeverage', 3)}")
                 print(f"Dex: {dex}")
                 print(f"\nFor your config file, set:")
                 print(f'  "market": "{full_name}"')
                 print(f'  "dex": "{dex}"')
                 if mid_price:
-                    print(f'  "exchange.price_decimals": {estimate_decimals(mid_price)}')
-                print(f'  "exchange.size_decimals": {asset.get("szDecimals", 2)}')
+                    print(f'  "exchange.price_decimals": {price_dec}')
+                print(f'  "exchange.size_decimals": {sz_dec}')
                 return
 
         print(f"Market '{market_name}' not found on dex '{dex}'")
@@ -109,11 +104,12 @@ def main():
         if name.upper() == coin.upper():
             ctx = meta[1][i]
             mark = float(ctx['markPx'])
+            sz_dec = asset.get('szDecimals', 2)
 
             print(f"Asset: {name}")
             print(f"Mark price: {mark}")
-            print(f"Suggested price_decimals: {estimate_decimals(mark)}")
-            print(f"Size decimals: {asset.get('szDecimals', 2)}")
+            print(f"Suggested price_decimals: {valid_price_decimals(mark, sz_dec)}")
+            print(f"Size decimals: {sz_dec}")
             print(f"Max leverage: {asset.get('maxLeverage', 3)}")
             return
 
